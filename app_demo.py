@@ -2,9 +2,16 @@
 app_demo.py — Napoleon Medical Pipeline
 ========================================
 Flow:
-  Tab 1 : Upload audio → transcribe (Scaleway Whisper) → hallucination check
-  Tab 2 : LLM extraction → enriched DPI + CR textuels (two Scaleway calls)
-  Tab 3 : PDF + downloads
+  Upload audio (+ optional DPI JSON)  →  click "Lancer"
+  The pipeline runs fully automatically:
+    1. Transcription  (Scaleway Whisper)
+    2. Hallucination check  (local)
+    3. Medical review  (LLM)
+    4. DPI enrichment  (LLM call 1)
+    5. CR generation   (LLM call 2)
+    6. PDF generation  (reportlab)
+
+  Tabs are read-only result viewers — no more button-per-step.
 """
 
 import io
@@ -60,6 +67,10 @@ st.markdown("""
     .stButton > button:hover { background: #026070; }
     .stDownloadButton > button { background: #0D1B3E; color: white; border: none; border-radius: 8px; font-weight: 600; }
     div[data-testid="stFileUploader"] { background: white; border-radius: 12px; border: 2px dashed #CBD5E1; padding: 1rem; }
+    .pipeline-step { display:flex; align-items:center; gap:0.6rem; padding:0.35rem 0; font-size:0.9rem; color:#475569; }
+    .pipeline-step .done { color:#059669; font-weight:700; }
+    .pipeline-step .spin { color:#028090; font-weight:700; }
+    .pipeline-step .wait { color:#CBD5E1; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -99,13 +110,17 @@ st.markdown("""
 
 # ── Session state ─────────────────────────────────────────────────────────────
 DEFAULTS = {
-    "transcript":       None,
-    "hallucination_ok": None,
-    "audio_filename":   None,
-    "existing_dpi":     None,  # uploaded by user (optional)
-    "enriched_dpi":     None,  # output of Call 1
-    "cr":               None,  # output of Call 2 (cr_modele.json)
-    "pdf_bytes":        None,
+    "transcript":           None,
+    "hallucination_ok":     None,
+    "hallucination_reason": None,
+    "review":               None,
+    "audio_filename":       None,
+    "existing_dpi":         None,
+    "enriched_dpi":         None,
+    "cr":                   None,
+    "pdf_bytes":            None,
+    "pipeline_done":        False,
+    "word_count":           0,
 }
 for k, v in DEFAULTS.items():
     if k not in st.session_state:
@@ -173,7 +188,7 @@ def call_llm(prompt: str, max_tokens: int = 4000) -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PDF GENERATOR
+# PDF GENERATOR  (unchanged from original)
 # ══════════════════════════════════════════════════════════════════════════════
 
 def generate_pdf(enriched_dpi: dict, cr: dict, filename_stem: str) -> bytes | None:
@@ -254,25 +269,23 @@ def generate_pdf(enriched_dpi: dict, cr: dict, filename_stem: str) -> bytes | No
     def ls(obj, key):
         return (obj or {}).get(key) or []
 
-    # ── Pull data ─────────────────────────────────────────────────────────────
-    dpi          = enriched_dpi.get("dpi") or {}
-    admin        = dpi.get("administratif") or {}
-    dossier      = dpi.get("dossier_medical") or {}
-    docs         = dpi.get("documents") or {}
-    historique   = dossier.get("historique_medical") or {}
-    traitements  = dossier.get("traitements") or {}
-    mode_vie     = dossier.get("mode_de_vie") or {}
+    dpi           = enriched_dpi.get("dpi") or {}
+    admin         = dpi.get("administratif") or {}
+    dossier       = dpi.get("dossier_medical") or {}
+    docs          = dpi.get("documents") or {}
+    historique    = dossier.get("historique_medical") or {}
+    traitements   = dossier.get("traitements") or {}
+    mode_vie      = dossier.get("mode_de_vie") or {}
     consultations = ls(docs, "consultations")
-    last_c       = consultations[-1] if consultations else {}
-    etat_civil   = admin.get("etat_civil") or {}
-    identite     = admin.get("identite_usage") or {}
-    dpi_textuel  = (cr or {}).get("dpi_textuel") or ""
-    cr_textuel   = (cr or {}).get("cr_textuel") or ""
-    prescs       = (cr or {}).get("prescription_lines") or []
+    last_c        = consultations[-1] if consultations else {}
+    etat_civil    = admin.get("etat_civil") or {}
+    identite      = admin.get("identite_usage") or {}
+    dpi_textuel   = (cr or {}).get("dpi_textuel") or ""
+    cr_textuel    = (cr or {}).get("cr_textuel") or ""
+    prescs        = (cr or {}).get("prescription_lines") or []
 
     story = []
 
-    # ── Banner ────────────────────────────────────────────────────────────────
     nom    = sv(identite,"nom_utilise") if sv(identite,"nom_utilise") != "—" else sv(etat_civil,"nom_naissance")
     prenom = sv(identite,"prenom_utilise", default="")
     ddn    = sv(etat_civil,"date_naissance", default="")
@@ -294,18 +307,15 @@ def generate_pdf(enriched_dpi: dict, cr: dict, filename_stem: str) -> bytes | No
     ]))
     story += [banner, Spacer(1, 4*mm)]
 
-    # ── 1. Résumé DPI ─────────────────────────────────────────────────────────
     if dpi_textuel:
         story += [make_table([sec("Résumé du dossier patient"), row("DPI", dpi_textuel)]),
                   Spacer(1, 3*mm)]
 
-    # ── 2. Motif ──────────────────────────────────────────────────────────────
     motif = sv(last_c, "motif_de_consultation")
     if motif != "—":
         story += [make_table([sec("Motif de consultation"), row("Motif", motif)]),
                   Spacer(1, 3*mm)]
 
-    # ── 3. Antécédents ────────────────────────────────────────────────────────
     path_chron = ls(historique, "pathologies_chroniques")
     antec_med  = ls(historique, "antecedents_medicaux")
     antec_chir = ls(historique, "antecedents_chirurgicaux")
@@ -315,7 +325,7 @@ def generate_pdf(enriched_dpi: dict, cr: dict, filename_stem: str) -> bytes | No
 
     if any([path_chron, antec_med, antec_chir, antec_fam, allergies,
             gyneco.get("gestite"), gyneco.get("contraception_actuelle")]):
-        entries = [sec("Historique médical & Antécédents")]
+        entries = [sec("Antécédents")]
         shade = False
         for p in path_chron:
             cim = sv(p,"code_cim10",default=""); ald = " · ALD" if p.get("ald") else ""
@@ -341,7 +351,6 @@ def generate_pdf(enriched_dpi: dict, cr: dict, filename_stem: str) -> bytes | No
             if parts: entries.append(row("Gynécologique", " · ".join(parts), shade))
         story += [make_table(entries), Spacer(1, 3*mm)]
 
-    # ── 4. Mode de vie ────────────────────────────────────────────────────────
     tabac    = mode_vie.get("tabac") or {}
     alcool   = mode_vie.get("alcool") or {}
     activite = ls(mode_vie, "activite_physique")
@@ -356,7 +365,6 @@ def generate_pdf(enriched_dpi: dict, cr: dict, filename_stem: str) -> bytes | No
             entries.append(row("Activité physique", f"{sv(a,'type')} — {sv(a,'frequence',default='')}".strip(" —"), shade)); shade = not shade
         story += [make_table(entries), Spacer(1, 3*mm)]
 
-    # ── 5. Traitements ────────────────────────────────────────────────────────
     trts_hab  = ls(traitements, "habituels")
     trts_ponc = ls(traitements, "ponctuels")
     if trts_hab or trts_ponc:
@@ -373,7 +381,6 @@ def generate_pdf(enriched_dpi: dict, cr: dict, filename_stem: str) -> bytes | No
             entries.append(row(f"{nom_t} (ponctuel)", f"{pos}{df_str}", shade)); shade = not shade
         story += [make_table(entries), Spacer(1, 3*mm)]
 
-    # ── 6. Compte-rendu ───────────────────────────────────────────────────────
     interrogatoire = sv(last_c, "interrogatoire")
     examen         = sv(last_c, "examen_clinique")
     conclusion     = sv(last_c, "conclusion")
@@ -388,14 +395,12 @@ def generate_pdf(enriched_dpi: dict, cr: dict, filename_stem: str) -> bytes | No
                                row("Compte-rendu", cr_textuel)]),
                   Spacer(1, 3*mm)]
 
-    # ── 7. Ordonnance ─────────────────────────────────────────────────────────
     if prescs:
         entries = [sec("Ordonnance")]
         for i, line in enumerate(prescs):
             entries.append(row(f"Prescription {i+1}", line, i % 2 == 1))
         story += [make_table(entries), Spacer(1, 3*mm)]
 
-    # ── Footer ────────────────────────────────────────────────────────────────
     story += [
         Spacer(1, 4*mm),
         HRFlowable(width=W, thickness=0.5, color=BORDER),
@@ -408,15 +413,111 @@ def generate_pdf(enriched_dpi: dict, cr: dict, filename_stem: str) -> bytes | No
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# PIPELINE RUNNER
+# ══════════════════════════════════════════════════════════════════════════════
+
+def run_pipeline(audio_bytes: bytes, audio_filename: str, existing_dpi: dict | None):
+    """Run all 6 steps sequentially, updating session state and UI live."""
+    from prompts import build_dpi_prompt, build_cr_prompt, build_review_prompt
+
+    STEPS = [
+        "Transcription audio",
+        "Vérification anti-hallucination",
+        "Relecture médicale",
+        "Enrichissement DPI",
+        "Rédaction du compte-rendu",
+        "Génération du PDF",
+    ]
+    n = len(STEPS)
+
+    progress_bar = st.progress(0.0)
+    status_text  = st.empty()
+    step_display = st.empty()
+
+    def update(i):
+        progress_bar.progress(i / n)
+        status_text.markdown(f"**Étape {i}/{n} — {STEPS[i-1]}…**")
+        lines = []
+        for j, s in enumerate(STEPS):
+            if j < i - 1:
+                lines.append(f'<div class="pipeline-step"><span class="done">✓</span> {s}</div>')
+            elif j == i - 1:
+                lines.append(f'<div class="pipeline-step"><span class="spin">▶</span> {s}</div>')
+            else:
+                lines.append(f'<div class="pipeline-step"><span class="wait">○</span> {s}</div>')
+        step_display.markdown("".join(lines), unsafe_allow_html=True)
+
+    def finish():
+        progress_bar.progress(1.0)
+        status_text.markdown("**✅ Pipeline terminé !**")
+        lines = [f'<div class="pipeline-step"><span class="done">✓</span> {s}</div>' for s in STEPS]
+        step_display.markdown("".join(lines), unsafe_allow_html=True)
+
+    # Step 1 — Transcription
+    update(1)
+    try:
+        text, wc = transcribe_audio(audio_bytes, audio_filename)
+    except Exception as e:
+        st.error(f"❌ Transcription échouée : {e}")
+        return
+    st.session_state.transcript     = text
+    st.session_state.word_count     = wc
+    st.session_state.audio_filename = audio_filename
+
+    # Step 2 — Hallucination check
+    update(2)
+    is_hal, reason = detect_hallucination(text)
+    st.session_state.hallucination_ok     = not is_hal
+    st.session_state.hallucination_reason = reason
+    if is_hal:
+        st.warning(f"⚠️ Hallucination détectée : {reason}. Pipeline continué — vérifiez la transcription.")
+
+    # Step 3 — Medical review
+    update(3)
+    review_result = call_llm(build_review_prompt(text), max_tokens=2000)
+    st.session_state.review = review_result if "error" not in review_result else None
+
+    # Step 4 — DPI enrichment
+    update(4)
+    dpi_result = call_llm(build_dpi_prompt(text, existing_dpi), max_tokens=4000)
+    if "error" in dpi_result:
+        st.error(f"❌ Erreur DPI : {dpi_result['error']}")
+        return
+    st.session_state.enriched_dpi = dpi_result
+
+    # Step 5 — CR generation
+    update(5)
+    cr_result = call_llm(build_cr_prompt(text, dpi_result), max_tokens=3000)
+    if "error" in cr_result:
+        st.error(f"❌ Erreur CR : {cr_result['error']}")
+        return
+    st.session_state.cr = cr_result
+
+    # Step 6 — PDF
+    update(6)
+    stem = Path(audio_filename).stem
+    st.session_state.pdf_bytes     = generate_pdf(dpi_result, cr_result, stem)
+    st.session_state.pipeline_done = True
+
+    finish()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # TABS
 # ══════════════════════════════════════════════════════════════════════════════
-tab1, tab2, tab3 = st.tabs(["🎙️  Transcription", "🧠  Extraction", "📋  Rapport PDF"])
+tab_launch, tab_transcription, tab_review, tab_extraction, tab_pdf = st.tabs([
+    "🚀  Lancer",
+    "🎙️  Transcription",
+    "🔍  Relecture",
+    "🧠  Extraction",
+    "📋  Rapport PDF",
+])
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# TAB 1 — Transcription
+# TAB 0 — LAUNCH
 # ════════════════════════════════════════════════════════════════════════════
-with tab1:
+with tab_launch:
     col1, col2 = st.columns([1, 1], gap="large")
 
     with col1:
@@ -440,108 +541,156 @@ with tab1:
         st.markdown("#### 2. Charger l'audio")
         st.caption("Formats : .m4a, .wav, .mp3, .flac, .ogg")
         uploaded = st.file_uploader("Audio", type=["m4a","wav","mp3","flac","ogg"], label_visibility="collapsed")
+        if uploaded:
+            st.audio(uploaded)
         st.markdown("</div>", unsafe_allow_html=True)
 
         if uploaded:
-            st.audio(uploaded)
-            st.session_state.audio_filename = uploaded.name
-            st.markdown('<div class="step-card">', unsafe_allow_html=True)
-            st.markdown("#### 3. Transcrire")
-            st.caption("Whisper large-v3 · Scaleway GPU · Français")
-            if st.button("▶  Lancer la transcription", use_container_width=True):
-                with st.spinner("Transcription en cours..."):
-                    try:
-                        text, wc = transcribe_audio(uploaded.read(), uploaded.name)
-                        st.session_state.transcript = text
-                        st.session_state.hallucination_ok = None
-                        st.success("Transcription terminée ✓")
-                        st.markdown(f"""
-                        <div class="metric-row">
-                            <div class="metric-box"><div class="value">🟢</div><div class="label">Scaleway GPU</div></div>
-                            <div class="metric-box"><div class="value">{wc}</div><div class="label">Mots</div></div>
-                        </div>""", unsafe_allow_html=True)
-                    except Exception as e:
-                        st.error(f"Erreur : {e}")
-            st.markdown("</div>", unsafe_allow_html=True)
+            dpi_status = "DPI fourni ✓" if st.session_state.existing_dpi else "Construction DPI depuis l'audio"
+            st.caption(f"Whisper large-v3 · llama-3.3-70b · Scaleway · {dpi_status}")
+            launch = st.button("🚀  Lancer le pipeline complet", use_container_width=True)
+
+            if launch:
+                run_pipeline(uploaded.read(), uploaded.name, st.session_state.existing_dpi)
 
     with col2:
-        if st.session_state.transcript:
+        if st.session_state.pipeline_done:
             st.markdown('<div class="step-card">', unsafe_allow_html=True)
-            st.markdown("#### 4. Vérification anti-hallucination")
-            is_hal, reason = detect_hallucination(st.session_state.transcript)
-            st.session_state.hallucination_ok = not is_hal
-            if is_hal:
-                st.markdown(f'<div class="alert-error">⚠️ <b>Hallucination détectée</b><br>{reason}</div>', unsafe_allow_html=True)
-            else:
-                st.markdown(f'<div class="alert-ok">✓ <b>Aucune hallucination</b><br>{reason}</div>', unsafe_allow_html=True)
-            st.markdown("</div>", unsafe_allow_html=True)
+            st.markdown("#### Résultats")
+            stem = Path(st.session_state.audio_filename or "consultation").stem
 
-            st.markdown('<div class="step-card">', unsafe_allow_html=True)
-            st.markdown("#### 5. Transcription finale")
-            st.caption("Modifiez si nécessaire avant l'extraction")
-            edited = st.text_area("Transcription :", value=st.session_state.transcript, height=300, label_visibility="collapsed")
-            if edited != st.session_state.transcript:
-                st.session_state.transcript = edited
-                st.caption("✏️ Modifiée manuellement")
+            wc        = st.session_state.word_count
+            hal_label = "✅ OK" if st.session_state.hallucination_ok else "⚠️ Détectée"
+            rev_count = len((st.session_state.review or {}).get("corrections", []))
+            st.markdown(f"""
+            <div class="metric-row">
+                <div class="metric-box"><div class="value">{wc}</div><div class="label">Mots</div></div>
+                <div class="metric-box"><div class="value">{hal_label}</div><div class="label">Hallucination</div></div>
+                <div class="metric-box"><div class="value">{rev_count}</div><div class="label">Corrections</div></div>
+            </div>""", unsafe_allow_html=True)
+
+            st.markdown("**Téléchargements :**")
+            if st.session_state.enriched_dpi:
+                st.download_button("⬇  DPI enrichi (JSON)",
+                    data=json.dumps(st.session_state.enriched_dpi, ensure_ascii=False, indent=2),
+                    file_name=f"dpi_{stem}.json", mime="application/json", use_container_width=True)
+            if st.session_state.cr:
+                st.download_button("⬇  Compte-rendu (JSON)",
+                    data=json.dumps(st.session_state.cr, ensure_ascii=False, indent=2),
+                    file_name=f"cr_{stem}.json", mime="application/json", use_container_width=True)
+            if st.session_state.pdf_bytes:
+                st.download_button("⬇  Rapport PDF",
+                    data=st.session_state.pdf_bytes,
+                    file_name=f"rapport_{stem}.pdf",
+                    mime="application/pdf", use_container_width=True)
             st.markdown("</div>", unsafe_allow_html=True)
         else:
             st.markdown("""
             <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:300px;color:#94A3B8;text-align:center">
-                <div style="font-size:3rem">🎙️</div><p>Chargez un fichier audio et lancez la transcription</p>
+                <div style="font-size:3rem">🚀</div>
+                <p>Chargez un fichier audio et cliquez sur <b>Lancer</b><br>pour démarrer le pipeline automatique.</p>
             </div>""", unsafe_allow_html=True)
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# TAB 2 — Extraction
+# TAB 1 — Transcription (viewer)
 # ════════════════════════════════════════════════════════════════════════════
-with tab2:
+with tab_transcription:
     if not st.session_state.transcript:
-        st.info("Complétez d'abord la transcription (onglet 1).")
+        st.info("Lancez le pipeline depuis l'onglet 🚀 Lancer.")
     else:
-        if st.session_state.hallucination_ok is False:
-            st.markdown('<div class="alert-warn">⚠️ Hallucination détectée — vérifiez la transcription avant d\'extraire.</div>', unsafe_allow_html=True)
-
-        col_left, col_right = st.columns([1, 2], gap="large")
-
+        col_left, col_right = st.columns([1, 1], gap="large")
         with col_left:
             st.markdown('<div class="step-card">', unsafe_allow_html=True)
-            st.markdown("#### Extraction LLM")
-            dpi_status = "✓ DPI existant chargé" if st.session_state.existing_dpi else "Ø Pas de DPI — construction depuis l'audio"
-            st.caption(f"llama-3.3-70b-instruct · Scaleway · {dpi_status}")
-
-            if st.button("🧠  Lancer l'extraction (2 appels)", use_container_width=True):
-                from prompts import build_dpi_prompt, build_cr_prompt
-                progress = st.progress(0)
-                status   = st.empty()
-
-                status.caption("Appel 1/2 — Enrichissement du DPI...")
-                dpi_result = call_llm(
-                    build_dpi_prompt(st.session_state.transcript, st.session_state.existing_dpi),
-                    max_tokens=4000
-                )
-                progress.progress(0.5)
-
-                if "error" in dpi_result:
-                    st.error(f"Erreur DPI : {dpi_result['error']}")
-                else:
-                    st.session_state.enriched_dpi = dpi_result
-                    status.caption("Appel 2/2 — Rédaction du compte-rendu...")
-                    cr_result = call_llm(
-                        build_cr_prompt(st.session_state.transcript, dpi_result),
-                        max_tokens=3000
-                    )
-                    progress.progress(1.0)
-                    if "error" in cr_result:
-                        st.error(f"Erreur CR : {cr_result['error']}")
-                    else:
-                        st.session_state.cr = cr_result
-                        st.success("Extraction terminée ✓")
-
-                status.empty()
-                progress.empty()
-
+            st.markdown("#### Informations")
+            is_hal = not st.session_state.hallucination_ok
+            reason = st.session_state.hallucination_reason or ""
+            if is_hal:
+                st.markdown(f'<div class="alert-error">⚠️ <b>Hallucination détectée</b><br>{reason}</div>', unsafe_allow_html=True)
+            else:
+                st.markdown(f'<div class="alert-ok">✓ <b>Aucune hallucination</b><br>{reason}</div>', unsafe_allow_html=True)
+            st.markdown(f"""
+            <div class="metric-row">
+                <div class="metric-box"><div class="value">{st.session_state.word_count}</div><div class="label">Mots</div></div>
+            </div>""", unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
+        with col_right:
+            st.markdown('<div class="step-card">', unsafe_allow_html=True)
+            st.markdown("#### Transcription")
+            st.caption("Modifiez si nécessaire — relancez le pipeline pour ré-extraire.")
+            edited = st.text_area("Transcription :", value=st.session_state.transcript,
+                                  height=300, label_visibility="collapsed")
+            if edited != st.session_state.transcript:
+                st.session_state.transcript = edited
+                st.caption("✏️ Modifiée manuellement — relancez le pipeline pour appliquer.")
+            st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# TAB 2 — Medical review (viewer)
+# ════════════════════════════════════════════════════════════════════════════
+with tab_review:
+    if not st.session_state.review:
+        st.info("Lancez le pipeline depuis l'onglet 🚀 Lancer.")
+    else:
+        review = st.session_state.review
+        st.markdown('<div class="step-card">', unsafe_allow_html=True)
+        st.markdown("#### Résumé de la relecture")
+        st.markdown(review.get("resume", "—"))
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        corrections = review.get("corrections", [])
+        alertes     = review.get("alertes", [])
+
+        col_l, col_r = st.columns(2, gap="large")
+        with col_l:
+            st.markdown('<div class="step-card">', unsafe_allow_html=True)
+            st.markdown(f"#### Corrections proposées ({len(corrections)})")
+            if corrections:
+                for c in corrections:
+                    conf_color = {"haute": "#059669", "moyenne": "#D97706", "faible": "#DC2626"}.get(
+                        c.get("confiance", ""), "#64748B")
+                    st.markdown(f"""
+                    <div style="border-left:3px solid {conf_color};padding:0.5rem 0.8rem;margin-bottom:0.5rem;background:#F8FAFC;border-radius:0 6px 6px 0">
+                        <b>{c.get('original','')}</b> → <b style="color:{conf_color}">{c.get('corrige','')}</b>
+                        <span style="background:#E2E8F0;border-radius:4px;padding:0.1rem 0.4rem;font-size:0.75rem;margin-left:0.4rem">{c.get('type','')}</span>
+                        <div style="font-size:0.8rem;color:#64748B;margin-top:0.3rem">{c.get('explication','')}</div>
+                    </div>""", unsafe_allow_html=True)
+            else:
+                st.markdown('<div class="alert-ok">✓ Aucune correction nécessaire</div>', unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        with col_r:
+            st.markdown('<div class="step-card">', unsafe_allow_html=True)
+            st.markdown(f"#### Alertes ({len(alertes)})")
+            if alertes:
+                for a in alertes:
+                    st.markdown(f"""
+                    <div class="alert-warn" style="margin-bottom:0.5rem">
+                        <b>Passage :</b> {a.get('texte','')}<br>
+                        <span style="font-size:0.85rem">{a.get('raison','')}</span>
+                    </div>""", unsafe_allow_html=True)
+            else:
+                st.markdown('<div class="alert-ok">✓ Aucune alerte</div>', unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        if review.get("transcription_corrigee"):
+            st.markdown('<div class="step-card">', unsafe_allow_html=True)
+            st.markdown("#### Transcription corrigée")
+            st.markdown(review["transcription_corrigee"])
+            st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# TAB 3 — Extraction (viewer)
+# ════════════════════════════════════════════════════════════════════════════
+with tab_extraction:
+    if not st.session_state.enriched_dpi and not st.session_state.cr:
+        st.info("Lancez le pipeline depuis l'onglet 🚀 Lancer.")
+    else:
+        col_left, col_right = st.columns([1, 2], gap="large")
+        with col_left:
             stem = Path(st.session_state.audio_filename or "consultation").stem
             if st.session_state.enriched_dpi:
                 st.download_button("⬇  DPI enrichi (JSON)",
@@ -551,67 +700,48 @@ with tab2:
                 st.download_button("⬇  Compte-rendu (JSON)",
                     data=json.dumps(st.session_state.cr, ensure_ascii=False, indent=2),
                     file_name=f"cr_{stem}.json", mime="application/json", use_container_width=True)
-
         with col_right:
-            if st.session_state.enriched_dpi or st.session_state.cr:
-                if st.session_state.enriched_dpi:
-                    st.markdown('<div class="json-section"><div class="json-section-header">🗂️ DPI enrichi</div></div>', unsafe_allow_html=True)
-                    with st.expander("Voir le JSON", expanded=False):
-                        st.json(st.session_state.enriched_dpi)
-                if st.session_state.cr:
-                    st.markdown('<div class="json-section"><div class="json-section-header">📝 Compte-rendu & Prescriptions</div></div>', unsafe_allow_html=True)
-                    cr = st.session_state.cr
-                    if cr.get("cr_textuel"):
-                        st.markdown(cr["cr_textuel"])
-                    if cr.get("prescription_lines"):
-                        st.markdown("**Ordonnance :**")
-                        for line in cr["prescription_lines"]:
-                            st.markdown(f"- {line}")
-                    if cr.get("dpi_textuel"):
-                        with st.expander("Résumé DPI textuel"):
-                            st.markdown(cr["dpi_textuel"])
-            else:
-                st.markdown("""
-                <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:300px;color:#94A3B8;text-align:center">
-                    <div style="font-size:3rem">🧠</div><p>Lancez l'extraction pour voir les résultats</p>
-                </div>""", unsafe_allow_html=True)
+            if st.session_state.enriched_dpi:
+                st.markdown('<div class="json-section"><div class="json-section-header">🗂️ DPI enrichi</div></div>', unsafe_allow_html=True)
+                with st.expander("Voir le JSON", expanded=False):
+                    st.json(st.session_state.enriched_dpi)
+            if st.session_state.cr:
+                st.markdown('<div class="json-section"><div class="json-section-header">📝 Compte-rendu & Prescriptions</div></div>', unsafe_allow_html=True)
+                cr = st.session_state.cr
+                if cr.get("cr_textuel"):
+                    st.markdown(cr["cr_textuel"])
+                if cr.get("prescription_lines"):
+                    st.markdown("**Ordonnance :**")
+                    for line in cr["prescription_lines"]:
+                        st.markdown(f"- {line}")
+                if cr.get("dpi_textuel"):
+                    with st.expander("Résumé DPI textuel"):
+                        st.markdown(cr["dpi_textuel"])
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# TAB 3 — PDF
+# TAB 4 — PDF (viewer)
 # ════════════════════════════════════════════════════════════════════════════
-with tab3:
-    if not st.session_state.enriched_dpi or not st.session_state.cr:
-        st.info("Complétez d'abord l'extraction LLM (onglet 2).")
+with tab_pdf:
+    if not st.session_state.pdf_bytes:
+        st.info("Lancez le pipeline depuis l'onglet 🚀 Lancer.")
     else:
         col1, col2 = st.columns([1, 2], gap="large")
-
         with col1:
             st.markdown('<div class="step-card">', unsafe_allow_html=True)
-            st.markdown("#### Générer le rapport PDF")
+            st.markdown("#### Rapport PDF")
             st.caption("Compte-rendu structuré — à valider par le médecin")
             stem = Path(st.session_state.audio_filename or "consultation").stem
-
-            if st.button("📋  Générer le PDF", use_container_width=True):
-                with st.spinner("Génération..."):
-                    pdf = generate_pdf(st.session_state.enriched_dpi, st.session_state.cr, stem)
-                if pdf:
-                    st.session_state.pdf_bytes = pdf
-                    st.success("PDF généré ✓")
-                else:
-                    st.error("Erreur — vérifiez que reportlab est installé.")
-
-            if st.session_state.pdf_bytes:
-                st.download_button("⬇  Télécharger le PDF",
-                    data=st.session_state.pdf_bytes,
-                    file_name=f"rapport_{stem}.pdf",
-                    mime="application/pdf", use_container_width=True)
+            st.download_button("⬇  Télécharger le PDF",
+                data=st.session_state.pdf_bytes,
+                file_name=f"rapport_{stem}.pdf",
+                mime="application/pdf", use_container_width=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
         with col2:
             st.markdown('<div class="step-card">', unsafe_allow_html=True)
             st.markdown("#### Aperçu")
-            cr = st.session_state.cr
+            cr = st.session_state.cr or {}
             if cr.get("cr_textuel"):
                 st.markdown(cr["cr_textuel"])
             if cr.get("prescription_lines"):

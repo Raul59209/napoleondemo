@@ -173,6 +173,54 @@ SCHÉMA À RESPECTER :
 """
 
 
+def build_review_prompt(transcript: str) -> str:
+    """
+    Medical review call: checks the transcript for transcription errors,
+    mis-heard medication names, wrong dosages, and anatomical term mistakes.
+    Returns a structured JSON with corrections and alerts.
+    """
+
+    review_schema = {
+        "resume": "string — une phrase résumant l'état général de la transcription",
+        "corrections": [
+            {
+                "original": "string — le mot ou groupe de mots tel que transcrit",
+                "corrige": "string — la correction proposée",
+                "type": "string — medicament | dosage | anatomie | autre",
+                "confiance": "string — haute | moyenne | faible",
+                "explication": "string — pourquoi cette correction est proposée"
+            }
+        ],
+        "alertes": [
+            {
+                "texte": "string — le passage concerné",
+                "raison": "string — pourquoi ce passage mérite attention du médecin"
+            }
+        ],
+        "transcription_corrigee": "string — la transcription complète avec les corrections appliquées"
+    }
+
+    return f"""Tu es un assistant médical expert en relecture de transcriptions de consultations médicales.
+
+TRANSCRIPTION À VÉRIFIER :
+{transcript}
+
+INSTRUCTIONS :
+- Vérifie les noms de médicaments : sont-ils orthographiés correctement ?
+  Un nom mal transcrit peut indiquer un médicament différent (ex: "Doliprane" vs "Dolipranne").
+- Vérifie les dosages : sont-ils cohérents et plausibles pour les médicaments mentionnés ?
+- Vérifie les termes anatomiques et médicaux : sont-ils correctement transcrits ?
+- Signale dans "alertes" tout passage ambigu que le médecin devrait relire, même si tu n'es
+  pas certain qu'il y ait une erreur.
+- Si la transcription semble correcte, retourne corrections=[] et alertes=[].
+- Ne corrige PAS le style ou la grammaire — uniquement les erreurs médicales potentielles.
+- Réponds UNIQUEMENT avec le JSON valide, sans texte avant ni après, sans markdown.
+
+SCHÉMA À RETOURNER :
+{json.dumps(review_schema, ensure_ascii=False, indent=2)}
+"""
+
+
 def build_cr_prompt(transcript: str, enriched_dpi: dict) -> str:
     """
     Call 2: generate CR textuels and prescription lines.
