@@ -645,7 +645,7 @@ with tab_launch:
                     file_name=f"cr_{stem}.json", mime="application/json", use_container_width=True)
             if st.session_state.pdf_bytes:
                 st.download_button("⬇  Rapport PDF",
-                                   key="download_pdf_launch",
+                                   key="download_pdf",
                     data=st.session_state.pdf_bytes,
                     file_name=f"rapport_{stem}.pdf",
                     mime="application/pdf", use_container_width=True)
