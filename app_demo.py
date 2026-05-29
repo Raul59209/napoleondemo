@@ -122,6 +122,9 @@ DEFAULTS = {
     "pdf_bytes":            None,
     "pipeline_done":        False,
     "word_count":           0,
+    "stt_time":             0.0,
+    "llm_time":             0.0,
+    "total_time":           0.0,
 }
 for k, v in DEFAULTS.items():
     if k not in st.session_state:
@@ -418,9 +421,9 @@ def generate_pdf(enriched_dpi: dict, cr: dict, filename_stem: str) -> bytes | No
 # ══════════════════════════════════════════════════════════════════════════════
 
 def run_pipeline(audio_bytes: bytes, audio_filename: str, existing_dpi: dict | None):
+    """Run all 6 steps sequentially, updating session state and UI live."""
     total_pipeline_start = time.perf_counter()
     total_llm_time = 0
-    """Run all 6 steps sequentially, updating session state and UI live."""
     from prompts import build_dpi_prompt, build_cr_prompt, build_review_prompt
 
     STEPS = [
@@ -463,14 +466,10 @@ def run_pipeline(audio_bytes: bytes, audio_filename: str, existing_dpi: dict | N
 
     try:
         text, wc = transcribe_audio(audio_bytes, audio_filename)
-
-        st.session_state.stt_time = (
-            time.perf_counter() - stt_start
-        )
-
     except Exception as e:
         st.error(f"❌ Transcription échouée : {e}")
         return
+    st.session_state.stt_time = (time.perf_counter() - stt_start)
     st.session_state.transcript     = text
     st.session_state.word_count     = wc
     st.session_state.audio_filename = audio_filename
@@ -629,7 +628,6 @@ with tab_launch:
                     <div class="value">{rev_count}</div>
                     <div class="label">Corrections</div>
                 </div>
-            </div>
             </div>""", unsafe_allow_html=True)
 
             st.markdown("**Téléchargements :**")
