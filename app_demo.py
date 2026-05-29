@@ -562,8 +562,7 @@ with tab_launch:
         st.markdown("</div>", unsafe_allow_html=True)
 
         if uploaded:
-            dpi_status = "DPI fourni ✓" if st.session_state.existing_dpi else "Construction DPI depuis l'audio"
-            st.caption(f"Whisper large-v3 · llama-3.3-70b · Scaleway · {dpi_status}")
+            st.caption(f"Whisper large-v3 · llama-3.3-70b · Scaleway")
             launch = st.button("🚀  Lancer le pipeline complet", use_container_width=True)
 
             if launch:
