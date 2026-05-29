@@ -635,14 +635,17 @@ with tab_launch:
             st.markdown("**Téléchargements :**")
             if st.session_state.enriched_dpi:
                 st.download_button("⬇  DPI enrichi (JSON)",
+                    key="download_dpi_launch",
                     data=json.dumps(st.session_state.enriched_dpi, ensure_ascii=False, indent=2),
                     file_name=f"dpi_{stem}.json", mime="application/json", use_container_width=True)
             if st.session_state.cr:
                 st.download_button("⬇  Compte-rendu (JSON)",
+                    key="download_cr_launch",
                     data=json.dumps(st.session_state.cr, ensure_ascii=False, indent=2),
                     file_name=f"cr_{stem}.json", mime="application/json", use_container_width=True)
             if st.session_state.pdf_bytes:
                 st.download_button("⬇  Rapport PDF",
+                                   key="download_pdf_launch",
                     data=st.session_state.pdf_bytes,
                     file_name=f"rapport_{stem}.pdf",
                     mime="application/pdf", use_container_width=True)
@@ -757,10 +760,12 @@ with tab_extraction:
             stem = Path(st.session_state.audio_filename or "consultation").stem
             if st.session_state.enriched_dpi:
                 st.download_button("⬇  DPI enrichi (JSON)",
+                    key="download_dpi_launch",
                     data=json.dumps(st.session_state.enriched_dpi, ensure_ascii=False, indent=2),
                     file_name=f"dpi_{stem}.json", mime="application/json", use_container_width=True)
             if st.session_state.cr:
                 st.download_button("⬇  Compte-rendu (JSON)",
+                    key="download_cr_launch",
                     data=json.dumps(st.session_state.cr, ensure_ascii=False, indent=2),
                     file_name=f"cr_{stem}.json", mime="application/json", use_container_width=True)
         with col_right:
@@ -796,6 +801,7 @@ with tab_pdf:
             st.caption("Compte-rendu structuré — à valider par le médecin")
             stem = Path(st.session_state.audio_filename or "consultation").stem
             st.download_button("⬇  Télécharger le PDF",
+                                key="download_pdf_launch",
                 data=st.session_state.pdf_bytes,
                 file_name=f"rapport_{stem}.pdf",
                 mime="application/pdf", use_container_width=True)
