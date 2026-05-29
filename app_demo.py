@@ -116,7 +116,6 @@ DEFAULTS = {
     "hallucination_reason": None,
     "review":               None,
     "audio_filename":       None,
-    "existing_dpi":         None,
     "enriched_dpi":         None,
     "cr":                   None,
     "pdf_bytes":            None,
@@ -420,8 +419,7 @@ def generate_pdf(enriched_dpi: dict, cr: dict, filename_stem: str) -> bytes | No
 # PIPELINE RUNNER
 # ══════════════════════════════════════════════════════════════════════════════
 
-def run_pipeline(audio_bytes: bytes, audio_filename: str, existing_dpi: dict | None):
-    """Run all 6 steps sequentially, updating session state and UI live."""
+def run_pipeline(audio_bytes: bytes, audio_filename: str):
     total_pipeline_start = time.perf_counter()
     total_llm_time = 0
     from prompts import build_dpi_prompt, build_cr_prompt, build_review_prompt
@@ -496,7 +494,7 @@ def run_pipeline(audio_bytes: bytes, audio_filename: str, existing_dpi: dict | N
     update(4)
     llm_start = time.perf_counter()
 
-    dpi_result = call_llm(build_dpi_prompt(text, existing_dpi), max_tokens=4000)
+    dpi_result = call_llm(build_dpi_prompt(text, None), max_tokens=4000)
 
     dpi_time = time.perf_counter() - llm_start
     total_llm_time += dpi_time
@@ -554,24 +552,9 @@ with tab_launch:
     col1, col2 = st.columns([1, 1], gap="large")
 
     with col1:
-        st.markdown('<div class="step-card">', unsafe_allow_html=True)
-        st.markdown("#### 1. DPI existant (optionnel)")
-        st.caption("Chargez le DPI JSON du patient si disponible. Sinon il sera construit depuis l'audio.")
-        dpi_file = st.file_uploader("DPI JSON", type=["json"], label_visibility="collapsed")
-        if dpi_file:
-            try:
-                st.session_state.existing_dpi = json.load(dpi_file)
-                st.markdown('<div class="alert-ok">✓ DPI chargé</div>', unsafe_allow_html=True)
-            except Exception as e:
-                st.error(f"JSON invalide : {e}")
-        elif st.session_state.existing_dpi:
-            st.markdown('<div class="alert-ok">✓ DPI déjà chargé en session</div>', unsafe_allow_html=True)
-        else:
-            st.caption("Aucun DPI — il sera construit à partir de l'audio.")
-        st.markdown("</div>", unsafe_allow_html=True)
 
         st.markdown('<div class="step-card">', unsafe_allow_html=True)
-        st.markdown("#### 2. Charger l'audio")
+        st.markdown("#### 1. Charger l'audio")
         st.caption("Formats : .m4a, .wav, .mp3, .flac, .ogg")
         uploaded = st.file_uploader("Audio", type=["m4a","wav","mp3","flac","ogg"], label_visibility="collapsed")
         if uploaded:
@@ -584,7 +567,7 @@ with tab_launch:
             launch = st.button("🚀  Lancer le pipeline complet", use_container_width=True)
 
             if launch:
-                run_pipeline(uploaded.read(), uploaded.name, st.session_state.existing_dpi)
+                run_pipeline(uploaded.read(), uploaded.name)
 
     with col2:
         if st.session_state.pipeline_done:
