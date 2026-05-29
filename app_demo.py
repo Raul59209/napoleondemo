@@ -640,7 +640,7 @@ with tab_launch:
                     file_name=f"dpi_{stem}.json", mime="application/json", use_container_width=True)
             if st.session_state.cr:
                 st.download_button("⬇  Compte-rendu (JSON)",
-                    key="download_cr_launch",
+                    key="download_cr",
                     data=json.dumps(st.session_state.cr, ensure_ascii=False, indent=2),
                     file_name=f"cr_{stem}.json", mime="application/json", use_container_width=True)
             if st.session_state.pdf_bytes:
