@@ -578,39 +578,17 @@ with tab_launch:
             hal_label = "✅ OK" if st.session_state.hallucination_ok else "⚠️ Détectée"
             rev_count = len((st.session_state.review or {}).get("corrections", []))
             st.markdown(f"""
-            <div class="metric-row">
-                <div class="metric-box">
-                    <div class="value">{wc}</div>
-                    <div class="label">Mots</div>
+                <div class="metric-row">
+                    <div class="metric-box"><div class="value">{wc}</div><div class="label">Mots</div></div>
+                    <div class="metric-box"><div class="value">{st.session_state.stt_time:.1f}s</div><div class="label">STT</div></div>
+                    <div class="metric-box"><div class="value">{st.session_state.llm_time:.1f}s</div><div class="label">LLM</div></div>
+                    <div class="metric-box"><div class="value">{st.session_state.total_time:.1f}s</div><div class="label">Total</div></div>
                 </div>
-
-                <div class="metric-box">
-                    <div class="value">{st.session_state.stt_time:.1f}s</div>
-                    <div class="label">STT</div>
+                <div class="metric-row">
+                    <div class="metric-box"><div class="value">{hal_label}</div><div class="label">Hallucination</div></div>
+                    <div class="metric-box"><div class="value">{rev_count}</div><div class="label">Corrections</div></div>
                 </div>
-
-                <div class="metric-box">
-                    <div class="value">{st.session_state.llm_time:.1f}s</div>
-                    <div class="label">LLM</div>
-                </div>
-
-                <div class="metric-box">
-                    <div class="value">{st.session_state.total_time:.1f}s</div>
-                    <div class="label">Total</div>
-                </div>
-            </div>
-
-            <div class="metric-row">
-                <div class="metric-box">
-                    <div class="value">{hal_label}</div>
-                    <div class="label">Hallucination</div>
-                </div>
-
-                <div class="metric-box">
-                    <div class="value">{rev_count}</div>
-                    <div class="label">Corrections</div>
-                </div>
-            </div>""", unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
 
             st.markdown("**Téléchargements :**")
             if st.session_state.enriched_dpi:
