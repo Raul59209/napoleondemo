@@ -18,6 +18,7 @@ import io
 import json
 import os
 import tempfile
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -417,6 +418,8 @@ def generate_pdf(enriched_dpi: dict, cr: dict, filename_stem: str) -> bytes | No
 # ══════════════════════════════════════════════════════════════════════════════
 
 def run_pipeline(audio_bytes: bytes, audio_filename: str, existing_dpi: dict | None):
+    total_pipeline_start = time.perf_counter()
+    total_llm_time = 0
     """Run all 6 steps sequentially, updating session state and UI live."""
     from prompts import build_dpi_prompt, build_cr_prompt, build_review_prompt
 
@@ -455,8 +458,16 @@ def run_pipeline(audio_bytes: bytes, audio_filename: str, existing_dpi: dict | N
 
     # Step 1 — Transcription
     update(1)
+
+    stt_start = time.perf_counter()
+
     try:
         text, wc = transcribe_audio(audio_bytes, audio_filename)
+
+        st.session_state.stt_time = (
+            time.perf_counter() - stt_start
+        )
+
     except Exception as e:
         st.error(f"❌ Transcription échouée : {e}")
         return
@@ -474,12 +485,22 @@ def run_pipeline(audio_bytes: bytes, audio_filename: str, existing_dpi: dict | N
 
     # Step 3 — Medical review
     update(3)
+    llm_start = time.perf_counter()
+
     review_result = call_llm(build_review_prompt(text), max_tokens=2000)
+
+    review_time = time.perf_counter() - llm_start
+    total_llm_time += review_time
     st.session_state.review = review_result if "error" not in review_result else None
 
     # Step 4 — DPI enrichment
     update(4)
+    llm_start = time.perf_counter()
+
     dpi_result = call_llm(build_dpi_prompt(text, existing_dpi), max_tokens=4000)
+
+    dpi_time = time.perf_counter() - llm_start
+    total_llm_time += dpi_time
     if "error" in dpi_result:
         st.error(f"❌ Erreur DPI : {dpi_result['error']}")
         return
@@ -487,7 +508,15 @@ def run_pipeline(audio_bytes: bytes, audio_filename: str, existing_dpi: dict | N
 
     # Step 5 — CR generation
     update(5)
-    cr_result = call_llm(build_cr_prompt(text, dpi_result), max_tokens=3000)
+    llm_start = time.perf_counter()
+
+    cr_result = call_llm(
+        build_cr_prompt(text, dpi_result),
+        max_tokens=3000
+    )
+
+    cr_time = time.perf_counter() - llm_start
+    total_llm_time += cr_time
     if "error" in cr_result:
         st.error(f"❌ Erreur CR : {cr_result['error']}")
         return
@@ -497,6 +526,11 @@ def run_pipeline(audio_bytes: bytes, audio_filename: str, existing_dpi: dict | N
     update(6)
     stem = Path(audio_filename).stem
     st.session_state.pdf_bytes     = generate_pdf(dpi_result, cr_result, stem)
+    st.session_state.llm_time = total_llm_time
+
+    st.session_state.total_time = (
+        time.perf_counter() - total_pipeline_start
+    )
     st.session_state.pipeline_done = True
 
     finish()
@@ -564,9 +598,38 @@ with tab_launch:
             rev_count = len((st.session_state.review or {}).get("corrections", []))
             st.markdown(f"""
             <div class="metric-row">
-                <div class="metric-box"><div class="value">{wc}</div><div class="label">Mots</div></div>
-                <div class="metric-box"><div class="value">{hal_label}</div><div class="label">Hallucination</div></div>
-                <div class="metric-box"><div class="value">{rev_count}</div><div class="label">Corrections</div></div>
+                <div class="metric-box">
+                    <div class="value">{wc}</div>
+                    <div class="label">Mots</div>
+                </div>
+
+                <div class="metric-box">
+                    <div class="value">{st.session_state.stt_time:.1f}s</div>
+                    <div class="label">STT</div>
+                </div>
+
+                <div class="metric-box">
+                    <div class="value">{st.session_state.llm_time:.1f}s</div>
+                    <div class="label">LLM</div>
+                </div>
+
+                <div class="metric-box">
+                    <div class="value">{st.session_state.total_time:.1f}s</div>
+                    <div class="label">Total</div>
+                </div>
+            </div>
+
+            <div class="metric-row">
+                <div class="metric-box">
+                    <div class="value">{hal_label}</div>
+                    <div class="label">Hallucination</div>
+                </div>
+
+                <div class="metric-box">
+                    <div class="value">{rev_count}</div>
+                    <div class="label">Corrections</div>
+                </div>
+            </div>
             </div>""", unsafe_allow_html=True)
 
             st.markdown("**Téléchargements :**")
