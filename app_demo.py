@@ -635,7 +635,7 @@ with tab_launch:
             st.markdown("**Téléchargements :**")
             if st.session_state.enriched_dpi:
                 st.download_button("⬇  DPI enrichi (JSON)",
-                    key="download_dpi_launch",
+                    key="enriched_dpi_download_launch",
                     data=json.dumps(st.session_state.enriched_dpi, ensure_ascii=False, indent=2),
                     file_name=f"dpi_{stem}.json", mime="application/json", use_container_width=True)
             if st.session_state.cr:
