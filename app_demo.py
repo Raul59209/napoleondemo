@@ -563,7 +563,7 @@ with tab_launch:
 
         if uploaded:
             st.caption(f"Whisper large-v3 · llama-3.3-70b · Scaleway")
-            launch = st.button("🚀  Lancer le pipeline complet", use_container_width=True)
+            launch = st.button("Lancer le pipeline complet", use_container_width=True)
 
             if launch:
                 run_pipeline(uploaded.read(), uploaded.name)
@@ -611,7 +611,7 @@ with tab_launch:
         else:
             st.markdown("""
             <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:300px;color:#94A3B8;text-align:center">
-                <div style="font-size:3rem">🚀</div>
+                <div style="font-size:3rem"></div>
                 <p>Chargez un fichier audio et cliquez sur <b>Lancer</b><br>pour démarrer le pipeline automatique.</p>
             </div>""", unsafe_allow_html=True)
 
@@ -621,7 +621,7 @@ with tab_launch:
 # ════════════════════════════════════════════════════════════════════════════
 with tab_transcription:
     if not st.session_state.transcript:
-        st.info("Lancez le pipeline depuis l'onglet 🚀 Lancer.")
+        st.info("Lancez le pipeline depuis l'onglet Lancer.")
     else:
         col_left, col_right = st.columns([1, 1], gap="large")
         with col_left:
@@ -656,7 +656,7 @@ with tab_transcription:
 # ════════════════════════════════════════════════════════════════════════════
 with tab_review:
     if not st.session_state.review:
-        st.info("Lancez le pipeline depuis l'onglet 🚀 Lancer.")
+        st.info("Lancez le pipeline depuis l'onglet Lancer.")
     else:
         review = st.session_state.review
         st.markdown('<div class="step-card">', unsafe_allow_html=True)
@@ -711,7 +711,7 @@ with tab_review:
 # ════════════════════════════════════════════════════════════════════════════
 with tab_extraction:
     if not st.session_state.enriched_dpi and not st.session_state.cr:
-        st.info("Lancez le pipeline depuis l'onglet 🚀 Lancer.")
+        st.info("Lancez le pipeline depuis l'onglet Lancer.")
     else:
         col_left, col_right = st.columns([1, 2], gap="large")
         with col_left:
@@ -750,7 +750,7 @@ with tab_extraction:
 # ════════════════════════════════════════════════════════════════════════════
 with tab_pdf:
     if not st.session_state.pdf_bytes:
-        st.info("Lancez le pipeline depuis l'onglet 🚀 Lancer.")
+        st.info("Lancez le pipeline depuis l'onglet Lancer.")
     else:
         col1, col2 = st.columns([1, 2], gap="large")
         with col1:
