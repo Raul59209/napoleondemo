@@ -11,129 +11,67 @@ import json
 
 def build_dpi_prompt(transcript: str, existing_dpi: dict | None = None) -> str:
     """
-    Call 1: enrich the DPI with data extracted from the transcript.
-    If existing_dpi is None, build from scratch.
-    The four consultation fields (motif_de_consultation, interrogatoire,
-    examen_clinique, conclusion) go into dpi.documents.consultations.
+    Call 1: extract consultation data from the transcript into the agreed schema.
+    If existing_dpi is provided, enrich it; otherwise build from scratch.
     """
 
     dpi_schema = {
-        "dpi": {
-            "administratif": {
-                "identite_usage": {
-                    "civilite": "string ou null",
-                    "nom_utilise": "string ou null",
-                    "prenom_utilise": "string ou null",
-                    "coordonnees": {
-                        "adresse": {
-                            "numero_voie": "string ou null",
-                            "type_voie": "string (rue|avenue|boulevard|impasse|chemin|allee|place|route|autre) ou null",
-                            "nom_voie": "string ou null",
-                            "code_postal": "string ou null",
-                            "ville": "string ou null",
-                            "pays": "string ou null"
-                        },
-                        "telephone_mobile": "string ou null",
-                        "email": "string ou null"
-                    }
-                },
-                "etat_civil": {
-                    "nom_naissance": "string ou null",
-                    "prenoms_naissance": ["string"],
-                    "date_naissance": "string ISO 8601 ou null",
-                    "sexe": "M | F | null"
-                },
-                "identifiants_couverture": {
-                    "medecin_traitant": {
-                        "nom": "string ou null",
-                        "prenom": "string ou null",
-                        "specialite": "string ou null"
-                    },
-                    "mutuelle": {
-                        "nom": "string ou null",
-                        "tiers_payant": "boolean ou null"
-                    }
-                }
-            },
-            "dossier_medical": {
-                "historique_medical": {
-                    "pathologies_chroniques": [{
-                        "libelle": "string ou null",
-                        "code_cim10": "string ou null",
-                        "ald": "boolean ou null",
-                        "traitements_actuels": [{"nom_commercial": "string ou null", "molecule": "string ou null"}],
-                        "commentaire": "string ou null"
-                    }],
-                    "antecedents_medicaux": [{
-                        "libelle": "string ou null",
-                        "code_cim10": "string ou null",
-                        "date": "string ISO 8601 ou null",
-                        "commentaire": "string ou null"
-                    }],
-                    "antecedents_chirurgicaux": [{
-                        "libelle": "string ou null",
-                        "date": "string ISO 8601 ou null",
-                        "etablissement": "string ou null",
-                        "commentaire": "string ou null"
-                    }],
-                    "familiaux": [{
-                        "lien_parente": "string ou null",
-                        "libelle": "string ou null",
-                        "commentaire": "string ou null"
-                    }],
-                    "allergies": [{
-                        "type": "medicamenteuse | alimentaire | environnementale | autre",
-                        "substance": "string ou null",
-                        "manifestation": "string ou null"
-                    }],
-                    "gynecologique": {
-                        "contraception_actuelle": "string ou null",
-                        "gestite": "integer ou null",
-                        "parite": "integer ou null"
-                    }
-                },
-                "traitements": {
-                    "habituels": [{
-                        "nom_commercial": "string ou null",
-                        "molecule": "string ou null",
-                        "posologie": "string ou null",
-                        "indication": "string ou null"
-                    }],
-                    "ponctuels": [{
-                        "nom_commercial": "string ou null",
-                        "molecule": "string ou null",
-                        "posologie": "string ou null",
-                        "date_fin": "string ISO 8601 ou null"
-                    }]
-                },
-                "mode_de_vie": {
-                    "tabac": {
-                        "quantite_par_frequence": "string ou null",
-                        "paquets_annees": "integer ou null"
-                    },
-                    "alcool": {"quantite_par_frequence": "string ou null"},
-                    "activite_physique": [{"type": "string ou null", "frequence": "string ou null"}]
-                },
-                "vaccins": [{
-                    "nom_commercial": "string ou null",
-                    "date_dose_1": "string ISO 8601 ou null",
-                    "rappel_prevu": "string ISO 8601 ou null"
-                }]
-            },
-            "documents": {
-                "consultations": [{
-                    "date": "string ISO 8601 ou null",
-                    "medecin": {
-                        "nom": "string ou null",
-                        "prenom": "string ou null",
-                        "specialite": "string ou null"
-                    },
-                    "motif_de_consultation": "string ou null",
-                    "interrogatoire": "string ou null",
-                    "examen_clinique": "string ou null",
-                    "conclusion": "string ou null"
-                }]
+        "motif_de_consultation": "string ou null",
+        "historique_medical": "string — contexte médical évoqué ou null",
+        "antecedents": {
+            "medicaux": ["liste de strings ou tableau vide"],
+            "chirurgicaux": ["liste de strings ou tableau vide"],
+            "gynecologiques": ["liste de strings ou tableau vide"],
+            "familiaux": ["liste de strings ou tableau vide"]
+        },
+        "mode_de_vie": {
+            "tabac": "string ou null",
+            "alcool": "string ou null",
+            "drogues": "string ou null",
+            "activite_physique": "string ou null",
+            "voyages_recents": "string ou null",
+            "autre": "string ou null"
+        },
+        "vaccins": [],
+        "traitements_habituels": [
+            {
+                "nom_commercial": "string",
+                "molecule": "string ou null",
+                "posologie": "string ou null"
             }
+        ],
+        "allergies": ["liste de strings ou tableau vide"],
+        "interrogatoire": {
+            "symptomes_generaux": "string ou null",
+            "symptomes_par_organe": [
+                {
+                    "organe": "string",
+                    "symptomes": "string",
+                    "date_debut": "string ou null",
+                    "evolution": "string ou null",
+                    "traitements_testes": "string ou null"
+                }
+            ],
+            "examens_realises": "string ou null"
+        },
+        "examen_clinique": {
+            "constantes": {
+                "poids_kg": "number ou null",
+                "taille_cm": "number ou null",
+                "imc": "number ou null",
+                "pression_arterielle": "string ou null",
+                "frequence_cardiaque": "number ou null",
+                "temperature": "number ou null",
+                "spo2": "number ou null"
+            },
+            "examen_specifique": "string ou null"
+        },
+        "conclusion": {
+            "diagnostic": "string ou null",
+            "proposition_therapeutique": "string ou null",
+            "examens_complementaires": ["liste de strings ou tableau vide"],
+            "orientation": "string ou null",
+            "prochaine_consultation": "string ou null"
         }
     }
 
@@ -142,7 +80,6 @@ def build_dpi_prompt(transcript: str, existing_dpi: dict | None = None) -> str:
 Le DPI existant du patient est fourni ci-dessous. Enrichis-le avec les informations
 extraites de la transcription. Conserve toutes les données existantes et ajoute ou
 mets à jour uniquement ce qui est mentionné dans la transcription.
-Ajoute la nouvelle consultation à la liste dpi.documents.consultations.
 
 DPI EXISTANT :
 {json.dumps(existing_dpi, ensure_ascii=False, indent=2)}
@@ -150,7 +87,7 @@ DPI EXISTANT :
     else:
         dpi_context = """
 Aucun DPI existant. Construis le DPI complet à partir des informations extraites
-de la transcription. Les champs non mentionnés doivent être null.
+de la transcription. Les champs non mentionnés doivent être null ou tableau vide.
 """
 
     return f"""Tu es un assistant médical expert en extraction d'informations cliniques.
@@ -161,11 +98,8 @@ TRANSCRIPTION DE LA CONSULTATION :
 
 INSTRUCTIONS :
 - Extrais toutes les informations médicales présentes dans la transcription.
-- La nouvelle entrée dans dpi.documents.consultations doit contenir :
-    motif_de_consultation, interrogatoire (symptômes, histoire de la maladie),
-    examen_clinique (constantes, examen physique), conclusion (diagnostic,
-    proposition thérapeutique, prochaine consultation).
-- Les champs non mentionnés dans la transcription doivent être null, jamais inventés.
+- Ne invente rien : les champs non mentionnés dans la transcription doivent être null ou [].
+- Pour les constantes (poids, tension, etc.), n'inscris que ce qui est explicitement dit.
 - Réponds UNIQUEMENT avec le JSON valide, sans texte avant ni après, sans markdown.
 
 SCHÉMA À RESPECTER :
