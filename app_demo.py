@@ -272,132 +272,141 @@ def generate_pdf(enriched_dpi: dict, cr: dict, filename_stem: str) -> bytes | No
     def ls(obj, key):
         return (obj or {}).get(key) or []
 
-    dpi           = enriched_dpi.get("dpi") or {}
-    admin         = dpi.get("administratif") or {}
-    dossier       = dpi.get("dossier_medical") or {}
-    docs          = dpi.get("documents") or {}
-    historique    = dossier.get("historique_medical") or {}
-    traitements   = dossier.get("traitements") or {}
-    mode_vie      = dossier.get("mode_de_vie") or {}
-    consultations = ls(docs, "consultations")
-    last_c        = consultations[-1] if consultations else {}
-    etat_civil    = admin.get("etat_civil") or {}
-    identite      = admin.get("identite_usage") or {}
-    dpi_textuel   = (cr or {}).get("dpi_textuel") or ""
-    cr_textuel    = (cr or {}).get("cr_textuel") or ""
-    prescs        = (cr or {}).get("prescription_lines") or []
+    # ── Pull data from flat schema ─────────────────────────────────────────────
+    dpi_textuel       = (cr or {}).get("dpi_textuel") or ""
+    cr_textuel        = (cr or {}).get("cr_textuel") or ""
+    prescs            = (cr or {}).get("prescription_lines") or []
+
+    motif             = enriched_dpi.get("motif_de_consultation") or ""
+    historique        = enriched_dpi.get("historique_medical") or ""
+    antecedents       = enriched_dpi.get("antecedents") or {}
+    mode_vie          = enriched_dpi.get("mode_de_vie") or {}
+    trts_hab          = enriched_dpi.get("traitements_habituels") or []
+    allergies         = enriched_dpi.get("allergies") or []
+    interrogatoire_d  = enriched_dpi.get("interrogatoire") or {}
+    examen_d          = enriched_dpi.get("examen_clinique") or {}
+    conclusion        = enriched_dpi.get("conclusion") or {}
 
     story = []
 
-    nom    = sv(identite,"nom_utilise") if sv(identite,"nom_utilise") != "—" else sv(etat_civil,"nom_naissance")
-    prenom = sv(identite,"prenom_utilise", default="")
-    ddn    = sv(etat_civil,"date_naissance", default="")
-    date_c = sv(last_c,"date", default="")
-    sub_parts = [f"{prenom} {nom}".strip()]
-    if ddn    != "—": sub_parts.append(f"Né(e) le {ddn}")
-    if date_c != "—": sub_parts.append(f"Consultation du {date_c}")
-
+    # ── Banner ────────────────────────────────────────────────────────────────
     banner = Table([
         [Paragraph("🩺  NAPOLEON — COMPTE-RENDU DE CONSULTATION", S_TTL)],
-        [Paragraph("  ·  ".join(sub_parts), S_SUB)],
     ], colWidths=[W])
     banner.setStyle(TableStyle([
         ("BACKGROUND",    (0,0),(-1,-1),NAVY),
-        ("TOPPADDING",    (0,0),(-1,-1),8),
-        ("BOTTOMPADDING", (0,0),(-1,-1),8),
+        ("TOPPADDING",    (0,0),(-1,-1),12),
+        ("BOTTOMPADDING", (0,0),(-1,-1),12),
         ("LEFTPADDING",   (0,0),(-1,-1),10),
         ("RIGHTPADDING",  (0,0),(-1,-1),10),
     ]))
     story += [banner, Spacer(1, 4*mm)]
 
+    # ── 1. Résumé DPI ─────────────────────────────────────────────────────────
     if dpi_textuel:
         story += [make_table([sec("Résumé du dossier patient"), row("DPI", dpi_textuel)]),
                   Spacer(1, 3*mm)]
 
-    motif = sv(last_c, "motif_de_consultation")
-    if motif != "—":
+    # ── 2. Motif ──────────────────────────────────────────────────────────────
+    if motif:
         story += [make_table([sec("Motif de consultation"), row("Motif", motif)]),
                   Spacer(1, 3*mm)]
 
-    path_chron = ls(historique, "pathologies_chroniques")
-    antec_med  = ls(historique, "antecedents_medicaux")
-    antec_chir = ls(historique, "antecedents_chirurgicaux")
-    antec_fam  = ls(historique, "familiaux")
-    allergies  = ls(historique, "allergies")
-    gyneco     = historique.get("gynecologique") or {}
-
-    if any([path_chron, antec_med, antec_chir, antec_fam, allergies,
-            gyneco.get("gestite"), gyneco.get("contraception_actuelle")]):
-        entries = [sec("Antécédents")]
-        shade = False
-        for p in path_chron:
-            cim = sv(p,"code_cim10",default=""); ald = " · ALD" if p.get("ald") else ""
-            entries.append(row("Pathologie chronique", f"{sv(p,'libelle')}{' ('+cim+')' if cim!='—' else ''}{ald}", shade)); shade = not shade
-        for a in antec_med:
-            entries.append(row("Antécédent médical", sv(a,"libelle"), shade)); shade = not shade
-        for a in antec_chir:
-            etab = sv(a,"etablissement",default="")
-            entries.append(row("Antécédent chirurgical", f"{sv(a,'libelle')}{' ('+etab+')' if etab!='—' else ''}", shade)); shade = not shade
-        for a in antec_fam:
-            lien = sv(a,"lien_parente",default="")
-            entries.append(row("Antécédent familial", f"{lien+' : ' if lien!='—' else ''}{sv(a,'libelle')}", shade)); shade = not shade
-        for a in allergies:
-            manif = sv(a,"manifestation",default="")
-            entries.append(row("Allergie", f"{sv(a,'substance')}{' → '+manif if manif!='—' else ''}", shade)); shade = not shade
-        if gyneco.get("gestite") is not None or gyneco.get("contraception_actuelle"):
-            parts = []
-            g  = sv(gyneco,"gestite",default=""); p2 = sv(gyneco,"parite",default="")
-            c  = sv(gyneco,"contraception_actuelle",default="")
-            if g  != "—": parts.append(f"G{g}")
-            if p2 != "—": parts.append(f"P{p2}")
-            if c  != "—": parts.append(f"Contraception : {c}")
-            if parts: entries.append(row("Gynécologique", " · ".join(parts), shade))
-        story += [make_table(entries), Spacer(1, 3*mm)]
-
-    tabac    = mode_vie.get("tabac") or {}
-    alcool   = mode_vie.get("alcool") or {}
-    activite = ls(mode_vie, "activite_physique")
-    if any([tabac.get("quantite_par_frequence"), alcool.get("quantite_par_frequence"), activite]):
-        entries = [sec("Mode de vie")]; shade = False
-        if tabac.get("quantite_par_frequence"):
-            pa = sv(tabac,"paquets_annees",default="")
-            entries.append(row("Tabac", f"{sv(tabac,'quantite_par_frequence')}{' · '+pa+' PA' if pa!='—' else ''}", shade)); shade = not shade
-        if alcool.get("quantite_par_frequence"):
-            entries.append(row("Alcool", sv(alcool,"quantite_par_frequence"), shade)); shade = not shade
-        for a in activite:
-            entries.append(row("Activité physique", f"{sv(a,'type')} — {sv(a,'frequence',default='')}".strip(" —"), shade)); shade = not shade
-        story += [make_table(entries), Spacer(1, 3*mm)]
-
-    trts_hab  = ls(traitements, "habituels")
-    trts_ponc = ls(traitements, "ponctuels")
-    if trts_hab or trts_ponc:
-        entries = [sec("Traitements")]; shade = False
-        for t in trts_hab:
-            nom_t = sv(t,"nom_commercial") if sv(t,"nom_commercial") != "—" else sv(t,"molecule")
-            pos   = sv(t,"posologie",default=""); indic = sv(t,"indication",default="")
-            entries.append(row(f"{nom_t} (habituel)", f"{pos}{' · '+indic if indic!='—' else ''}", shade)); shade = not shade
-        for t in trts_ponc:
-            nom_t  = sv(t,"nom_commercial") if sv(t,"nom_commercial") != "—" else sv(t,"molecule")
-            pos    = sv(t,"posologie",default="")
-            df     = sv(t,"date_fin",default="")
-            df_str = f" · jusqu'au {df}" if df != "—" else ""
-            entries.append(row(f"{nom_t} (ponctuel)", f"{pos}{df_str}", shade)); shade = not shade
-        story += [make_table(entries), Spacer(1, 3*mm)]
-
-    interrogatoire = sv(last_c, "interrogatoire")
-    examen         = sv(last_c, "examen_clinique")
-    conclusion     = sv(last_c, "conclusion")
-    if any(v != "—" for v in [interrogatoire, examen, conclusion]):
-        entries = [sec("Compte-rendu de la consultation")]
-        if interrogatoire != "—": entries.append(row("Interrogatoire", interrogatoire))
-        if examen         != "—": entries.append(row("Examen clinique", examen))
-        if conclusion     != "—": entries.append(row("Conclusion",      conclusion))
-        story += [make_table(entries), Spacer(1, 3*mm)]
-    elif cr_textuel:
-        story += [make_table([sec("Compte-rendu de la consultation"),
-                               row("Compte-rendu", cr_textuel)]),
+    # ── 3. Historique ─────────────────────────────────────────────────────────
+    if historique:
+        story += [make_table([sec("Historique médical"), row("Contexte", historique)]),
                   Spacer(1, 3*mm)]
 
+    # ── 4. Antécédents & Allergies ────────────────────────────────────────────
+    antec_med  = antecedents.get("medicaux") or []
+    antec_chir = antecedents.get("chirurgicaux") or []
+    antec_fam  = antecedents.get("familiaux") or []
+    antec_gyn  = antecedents.get("gynecologiques") or []
+    if any([antec_med, antec_chir, antec_fam, antec_gyn, allergies]):
+        entries = [sec("Antécédents & Allergies")]; shade = False
+        for a in antec_med:
+            entries.append(row("Médical", a, shade)); shade = not shade
+        for a in antec_chir:
+            entries.append(row("Chirurgical", a, shade)); shade = not shade
+        for a in antec_fam:
+            entries.append(row("Familial", a, shade)); shade = not shade
+        for a in antec_gyn:
+            entries.append(row("Gynécologique", a, shade)); shade = not shade
+        for a in allergies:
+            entries.append(row("Allergie", a, shade)); shade = not shade
+        story += [make_table(entries), Spacer(1, 3*mm)]
+
+    # ── 5. Mode de vie ────────────────────────────────────────────────────────
+    mv_items = {k: v for k, v in mode_vie.items() if v}
+    if mv_items:
+        entries = [sec("Mode de vie")]; shade = False
+        labels  = {"tabac": "Tabac", "alcool": "Alcool", "drogues": "Drogues",
+                   "activite_physique": "Activité physique",
+                   "voyages_recents": "Voyages récents", "autre": "Autre"}
+        for k, v in mv_items.items():
+            entries.append(row(labels.get(k, k.capitalize()), v, shade)); shade = not shade
+        story += [make_table(entries), Spacer(1, 3*mm)]
+
+    # ── 6. Traitements habituels ──────────────────────────────────────────────
+    if trts_hab:
+        entries = [sec("Traitements habituels")]; shade = False
+        for t in trts_hab:
+            nom_t = t.get("nom_commercial") or t.get("molecule") or "—"
+            pos   = t.get("posologie") or ""
+            entries.append(row(nom_t, pos, shade)); shade = not shade
+        story += [make_table(entries), Spacer(1, 3*mm)]
+
+    # ── 7. Interrogatoire ─────────────────────────────────────────────────────
+    symp_gen = interrogatoire_d.get("symptomes_generaux") or ""
+    symp_org = interrogatoire_d.get("symptomes_par_organe") or []
+    examens  = interrogatoire_d.get("examens_realises") or ""
+    if symp_gen or symp_org or examens:
+        entries = [sec("Interrogatoire")]
+        if symp_gen:
+            entries.append(row("Symptômes généraux", symp_gen))
+        for s in symp_org:
+            detail = s.get("symptomes", "")
+            if s.get("date_debut"):  detail += f" — depuis {s['date_debut']}"
+            if s.get("evolution"):   detail += f" — {s['evolution']}"
+            entries.append(row(s.get("organe", ""), detail))
+        if examens:
+            entries.append(row("Examens réalisés", examens))
+        story += [make_table(entries), Spacer(1, 3*mm)]
+
+    # ── 8. Examen clinique ────────────────────────────────────────────────────
+    constantes = examen_d.get("constantes") or {}
+    exam_spec  = examen_d.get("examen_specifique") or ""
+    const_vals = {k: v for k, v in constantes.items() if v is not None}
+    const_labels = {"poids_kg": "Poids (kg)", "taille_cm": "Taille (cm)", "imc": "IMC",
+                    "pression_arterielle": "Pression artérielle",
+                    "frequence_cardiaque": "Fréquence cardiaque",
+                    "temperature": "Température (°C)", "spo2": "SpO2 (%)"}
+    if const_vals or exam_spec:
+        entries = [sec("Examen clinique")]; shade = False
+        for k, v in const_vals.items():
+            entries.append(row(const_labels.get(k, k), str(v), shade)); shade = not shade
+        if exam_spec:
+            entries.append(row("Examen spécifique", exam_spec, shade))
+        story += [make_table(entries), Spacer(1, 3*mm)]
+
+    # ── 9. Conclusion ─────────────────────────────────────────────────────────
+    diag   = conclusion.get("diagnostic") or ""
+    prop   = conclusion.get("proposition_therapeutique") or ""
+    excomp = conclusion.get("examens_complementaires") or []
+    orient = conclusion.get("orientation") or ""
+    proch  = conclusion.get("prochaine_consultation") or ""
+    if any([diag, prop, excomp, orient, proch, cr_textuel]):
+        entries = [sec("Conclusion")]
+        if diag:   entries.append(row("Diagnostic", diag))
+        if prop:   entries.append(row("Proposition thérapeutique", prop))
+        if excomp: entries.append(row("Examens complémentaires", ", ".join(excomp)))
+        if orient: entries.append(row("Orientation", orient))
+        if proch:  entries.append(row("Prochaine consultation", proch))
+        if cr_textuel and not any([diag, prop]):
+            entries.append(row("Compte-rendu", cr_textuel))
+        story += [make_table(entries), Spacer(1, 3*mm)]
+
+    # ── 10. Ordonnance ────────────────────────────────────────────────────────
     if prescs:
         entries = [sec("Ordonnance")]
         for i, line in enumerate(prescs):
