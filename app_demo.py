@@ -509,8 +509,8 @@ def run_pipeline(audio_bytes: bytes, audio_filename: str):
         labeled = diarization_result.get("labeled_transcript")
         if labeled:
             text = labeled
-        else:
-            st.session_state.diarization = None
+    else:
+        st.session_state.diarization = None
 
     # Step 5 — DPI enrichment
     update(5)
