@@ -512,12 +512,20 @@ def run_pipeline(audio_bytes: bytes, audio_filename: str):
     # 8000 was causing silent failures.
     diarization_result = call_llm(build_diarization_prompt(text), max_tokens=3000)
     if "error" not in diarization_result:
-        st.session_state.diarization = diarization_result
-        labeled = diarization_result.get("labeled_transcript")
+        segments = diarization_result.get("segments", [])
+        # Build labeled_transcript in Python — no risk of JSON truncation
+        lines = []
+        labeled_text_parts = []
+        for seg in segments:
+            speaker = seg.get("speaker", "?")
+            seg_text = seg.get("text", "")
+            lines.append({"speaker": speaker, "text": seg_text})
+            labeled_text_parts.append(f"{speaker}: {seg_text}")
+        labeled = "\n".join(labeled_text_parts)
+        st.session_state.diarization = {"segments": lines, "labeled_transcript": labeled}
         if labeled:
             text = labeled
     else:
-        # Show the error so the user knows diarization failed
         st.warning(f"⚠️ Diarisation échouée (pipeline continué sans) : {diarization_result.get('error', 'erreur inconnue')}")
         st.session_state.diarization = None
 

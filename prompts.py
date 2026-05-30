@@ -208,38 +208,31 @@ SCHÉMA À RETOURNER :
 def build_diarization_prompt(transcript: str) -> str:
     """
     LLM-based speaker diarization for a 2-speaker medical consultation.
-    The LLM re-labels each sentence as either Médecin or Patient based on
-    content clues (questions, diagnoses, symptoms, answers, etc.).
-    Returns a list of labeled segments.
+    Only returns segments list — labeled_transcript is built in Python.
     """
- 
+
     schema = {
         "segments": [
             {
-                "speaker": "Médecin | Patient",
-                "text": "string — the exact sentence or phrase as it appeared in the transcript"
+                "speaker": "Medecin | Patient",
+                "text": "the exact sentence or phrase as it appeared in the transcript"
             }
-        ],
-        "labeled_transcript": "string — the full transcript with speaker labels prefixed to each line, e.g. 'Médecin: Bonjour, quel est votre motif de consultation ?\\nPatient: J\\'ai mal à la tête depuis trois jours.'"
+        ]
     }
- 
-    return f"""Tu es un assistant médical expert en analyse de consultations médicales.
- 
-TRANSCRIPTION D'UNE CONSULTATION MÉDICALE :
+
+    return f"""Tu es un assistant medical expert en analyse de consultations medicales.
+
+TRANSCRIPTION DE LA CONSULTATION :
 {transcript}
- 
+
 INSTRUCTIONS :
-- Cette transcription contient exactement 2 interlocuteurs : le Médecin et le Patient.
-- Attribue chaque phrase ou réplique au bon interlocuteur en te basant sur le contenu :
-    • Le Médecin pose des questions cliniques, examine, prescrit, explique un diagnostic,
-      utilise du vocabulaire médical, donne des instructions.
-    • Le Patient décrit ses symptômes, répond aux questions, donne son historique,
-      exprime ses inquiétudes, dit "D'accord", "Oui", "Non", etc.
-- Si une réplique est ambiguë, utilise le contexte (qui parlait avant/après) pour décider.
-- Ne modifie PAS le texte des répliques — copie-les exactement telles quelles.
-- Dans labeled_transcript, préfixe chaque réplique avec "Médecin: " ou "Patient: ".
-- Réponds UNIQUEMENT avec le JSON valide, sans texte avant ni après, sans markdown.
- 
-SCHÉMA À RETOURNER :
+- Il y a exactement 2 interlocuteurs : le Medecin et le Patient.
+- Decoupe en repliques et attribue chaque replique au bon interlocuteur.
+- Le Medecin : pose des questions, prescrit, diagnostique, vocabulaire medical.
+- Le Patient : decrit symptomes, repond, dit oui/non/d accord.
+- Ne modifie PAS le texte des repliques, copie-les exactement.
+- Reponds UNIQUEMENT avec du JSON valide, sans texte supplementaire.
+
+SCHEMA :
 {json.dumps(schema, ensure_ascii=False, indent=2)}
 """
