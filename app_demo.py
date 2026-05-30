@@ -124,7 +124,7 @@ DEFAULTS = {
     "stt_time":             0.0,
     "llm_time":             0.0,
     "total_time":           0.0,
-    "diarizatino":          None,
+    "diarization":          None,
 }
 for k, v in DEFAULTS.items():
     if k not in st.session_state:
