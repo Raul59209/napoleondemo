@@ -124,6 +124,7 @@ DEFAULTS = {
     "stt_time":             0.0,
     "llm_time":             0.0,
     "total_time":           0.0,
+    "diarizatino":          None,
 }
 for k, v in DEFAULTS.items():
     if k not in st.session_state:
@@ -431,12 +432,13 @@ def generate_pdf(enriched_dpi: dict, cr: dict, filename_stem: str) -> bytes | No
 def run_pipeline(audio_bytes: bytes, audio_filename: str):
     total_pipeline_start = time.perf_counter()
     total_llm_time = 0
-    from prompts import build_dpi_prompt, build_cr_prompt, build_review_prompt
+    from prompts import build_dpi_prompt, build_cr_prompt, build_review_prompt, build_diarization_prompt
 
     STEPS = [
         "Transcription audio",
         "Vérification anti-hallucination",
         "Relecture médicale",
+        "Diarisation (identification des locuteurs)",
         "Enrichissement DPI",
         "Rédaction du compte-rendu",
         "Génération du PDF",
@@ -499,8 +501,19 @@ def run_pipeline(audio_bytes: bytes, audio_filename: str):
     total_llm_time += review_time
     st.session_state.review = review_result if "error" not in review_result else None
 
-    # Step 4 — DPI enrichment
+    # STep 4 - Diarization
     update(4)
+    diarization_result = call_llm(build_diarization_prompt(text), max_tokens=4000)
+    if "error" not in diarization_result:
+        st.session_state.diarization = diarization_result
+        labeled = diarization_result.get("labeled_transcript")
+        if labeled:
+            text = labeled
+        else:
+            st.session_state.diarization = None
+
+    # Step 5 — DPI enrichment
+    update(5)
     llm_start = time.perf_counter()
 
     dpi_result = call_llm(build_dpi_prompt(text, None), max_tokens=4000)
@@ -512,8 +525,8 @@ def run_pipeline(audio_bytes: bytes, audio_filename: str):
         return
     st.session_state.enriched_dpi = dpi_result
 
-    # Step 5 — CR generation
-    update(5)
+    # Step 6 — CR generation
+    update(6)
     llm_start = time.perf_counter()
 
     cr_result = call_llm(
@@ -528,8 +541,8 @@ def run_pipeline(audio_bytes: bytes, audio_filename: str):
         return
     st.session_state.cr = cr_result
 
-    # Step 6 — PDF
-    update(6)
+    # Step 7 — PDF
+    update(7)
     stem = Path(audio_filename).stem
     st.session_state.pdf_bytes     = generate_pdf(dpi_result, cr_result, stem)
     st.session_state.llm_time = total_llm_time
