@@ -182,8 +182,15 @@ def call_llm(prompt: str, max_tokens: int = 4000) -> dict:
             max_tokens=max_tokens,
         )
         raw = response.choices[0].message.content.strip()
+        # Strip markdown code fences if present
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        # Extract the first complete JSON object or array,
+        # ignoring any trailing text the model added after it
+        import re
+        match = re.search(r'(\{.*\}|\[.*\])', raw, re.DOTALL)
+        if match:
+            raw = match.group(1)
         return json.loads(raw)
     except json.JSONDecodeError as e:
         return {"error": f"JSON invalide : {e}", "raw": raw[:500]}
