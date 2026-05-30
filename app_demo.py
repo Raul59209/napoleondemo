@@ -662,6 +662,7 @@ with tab_transcription:
             st.markdown("</div>", unsafe_allow_html=True)
 
         with col_right:
+            st.write(st.session_state.get("diarization"))
             if st.session_state.diarization:
                 st.markdown('<div class="step-card">', unsafe_allow_html=True)
                 st.markdown("#### Transcription diarisée")
