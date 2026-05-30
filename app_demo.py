@@ -185,12 +185,10 @@ def call_llm(prompt: str, max_tokens: int = 4000) -> dict:
         # Strip markdown code fences if present
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-        # Extract the first complete JSON object or array,
-        # ignoring any trailing text the model added after it
-        import re
-        match = re.search(r'(\{.*\}|\[.*\])', raw, re.DOTALL)
-        if match:
-            raw = match.group(1)
+        # Strip anything after the last closing brace (extra text from LLM)
+        last_brace = raw.rfind("}")
+        if last_brace != -1:
+            raw = raw[:last_brace + 1]
         return json.loads(raw)
     except json.JSONDecodeError as e:
         return {"error": f"JSON invalide : {e}", "raw": raw[:500]}
