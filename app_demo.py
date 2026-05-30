@@ -124,7 +124,7 @@ DEFAULTS = {
     "stt_time":             0.0,
     "llm_time":             0.0,
     "total_time":           0.0,
-    "diarization":          None,
+    "diarizatino":          None,
 }
 for k, v in DEFAULTS.items():
     if k not in st.session_state:
@@ -503,7 +503,7 @@ def run_pipeline(audio_bytes: bytes, audio_filename: str):
 
     # STep 4 - Diarization
     update(4)
-    diarization_result = call_llm(build_diarization_prompt(text), max_tokens=4000)
+    diarization_result = call_llm(build_diarization_prompt(text), max_tokens=8000)
     if "error" not in diarization_result:
         st.session_state.diarization = diarization_result
         labeled = diarization_result.get("labeled_transcript")
@@ -662,7 +662,6 @@ with tab_transcription:
             st.markdown("</div>", unsafe_allow_html=True)
 
         with col_right:
-            st.write(st.session_state.get("diarization"))
             if st.session_state.diarization:
                 st.markdown('<div class="step-card">', unsafe_allow_html=True)
                 st.markdown("#### Transcription diarisée")
