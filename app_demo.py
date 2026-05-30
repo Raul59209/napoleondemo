@@ -501,15 +501,19 @@ def run_pipeline(audio_bytes: bytes, audio_filename: str):
     total_llm_time += review_time
     st.session_state.review = review_result if "error" not in review_result else None
 
-    # STep 4 - Diarization
+    # Step 4 - Diarization
     update(4)
-    diarization_result = call_llm(build_diarization_prompt(text), max_tokens=8000)
+    # max_tokens=3000: Scaleway llama-3.3-70b caps at ~4096 output tokens.
+    # 8000 was causing silent failures.
+    diarization_result = call_llm(build_diarization_prompt(text), max_tokens=3000)
     if "error" not in diarization_result:
         st.session_state.diarization = diarization_result
         labeled = diarization_result.get("labeled_transcript")
         if labeled:
             text = labeled
     else:
+        # Show the error so the user knows diarization failed
+        st.warning(f"⚠️ Diarisation échouée (pipeline continué sans) : {diarization_result.get('error', 'erreur inconnue')}")
         st.session_state.diarization = None
 
     # Step 5 — DPI enrichment
