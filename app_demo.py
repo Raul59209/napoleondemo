@@ -662,8 +662,22 @@ with tab_transcription:
             st.markdown("</div>", unsafe_allow_html=True)
 
         with col_right:
+            if st.session_state.diarization:
+                st.markdown('<div class="step-card">', unsafe_allow_html=True)
+                st.markdown("#### Transcription diarisée")
+                st.caption("Locuteurs identifiés par l'IA — Médecin vs Patient")
+                labeled = st.session_state.diarization.get("labeled_transcript", "")
+                for line in labeled.split("\n"):
+                    if line.startswith("Médecin:"):
+                        st.markdown(f'<p style="color:#0D1B3E;margin:2px 0"><b>{line}</b></p>', unsafe_allow_html=True)
+                    elif line.startswith("Patient:"):
+                        st.markdown(f'<p style="color:#028090;margin:2px 0">{line}</p>', unsafe_allow_html=True)
+                    elif line.strip():
+                        st.markdown(f'<p style="color:#64748B;margin:2px 0">{line}</p>', unsafe_allow_html=True)
+                st.markdown("</div>", unsafe_allow_html=True)
+
             st.markdown('<div class="step-card">', unsafe_allow_html=True)
-            st.markdown("#### Transcription")
+            st.markdown("#### Transcription brute")
             st.caption("Modifiez si nécessaire — relancez le pipeline pour ré-extraire.")
             edited = st.text_area("Transcription :", value=st.session_state.transcript,
                                   height=300, label_visibility="collapsed")
