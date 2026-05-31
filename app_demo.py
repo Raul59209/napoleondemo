@@ -284,7 +284,6 @@ def generate_pdf(enriched_dpi: dict, cr: dict, filename_stem: str) -> bytes | No
     prescs            = (cr or {}).get("prescription_lines") or []
 
     motif             = enriched_dpi.get("motif_de_consultation") or ""
-    historique        = enriched_dpi.get("historique_medical") or ""
     antecedents       = enriched_dpi.get("antecedents") or {}
     mode_vie          = enriched_dpi.get("mode_de_vie") or {}
     trts_hab          = enriched_dpi.get("traitements_habituels") or []
@@ -308,9 +307,9 @@ def generate_pdf(enriched_dpi: dict, cr: dict, filename_stem: str) -> bytes | No
     ]))
     story += [banner, Spacer(1, 4*mm)]
 
-    # ── 1. Résumé DPI ─────────────────────────────────────────────────────────
+    # ── 1. Résumé DPI (bullet format from cr.dpi_textuel) ────────────────────
     if dpi_textuel:
-        story += [make_table([sec("Résumé du dossier patient"), row("DPI", dpi_textuel)]),
+        story += [make_table([sec("Résumé du dossier patient"), row("", dpi_textuel)]),
                   Spacer(1, 3*mm)]
 
     # ── 2. Motif ──────────────────────────────────────────────────────────────
@@ -318,12 +317,7 @@ def generate_pdf(enriched_dpi: dict, cr: dict, filename_stem: str) -> bytes | No
         story += [make_table([sec("Motif de consultation"), row("Motif", motif)]),
                   Spacer(1, 3*mm)]
 
-    # ── 3. Historique ─────────────────────────────────────────────────────────
-    if historique:
-        story += [make_table([sec("Historique médical"), row("Contexte", historique)]),
-                  Spacer(1, 3*mm)]
-
-    # ── 4. Antécédents & Allergies ────────────────────────────────────────────
+    # ── 3. Antécédents & Allergies ────────────────────────────────────────────
     antec_med  = antecedents.get("medicaux") or []
     antec_chir = antecedents.get("chirurgicaux") or []
     antec_fam  = antecedents.get("familiaux") or []
@@ -338,11 +332,13 @@ def generate_pdf(enriched_dpi: dict, cr: dict, filename_stem: str) -> bytes | No
             entries.append(row("Familial", a, shade)); shade = not shade
         for a in antec_gyn:
             entries.append(row("Gynécologique", a, shade)); shade = not shade
-        for a in allergies:
-            entries.append(row("Allergie", a, shade)); shade = not shade
+        if allergies:
+            entries.append(row("Allergies", ", ".join(allergies), shade))
+        else:
+            entries.append(row("Allergies", "Aucune connue", shade))
         story += [make_table(entries), Spacer(1, 3*mm)]
 
-    # ── 5. Mode de vie ────────────────────────────────────────────────────────
+    # ── 4. Mode de vie ────────────────────────────────────────────────────────
     mv_items = {k: v for k, v in mode_vie.items() if v}
     if mv_items:
         entries = [sec("Mode de vie")]; shade = False
@@ -353,7 +349,7 @@ def generate_pdf(enriched_dpi: dict, cr: dict, filename_stem: str) -> bytes | No
             entries.append(row(labels.get(k, k.capitalize()), v, shade)); shade = not shade
         story += [make_table(entries), Spacer(1, 3*mm)]
 
-    # ── 6. Traitements habituels ──────────────────────────────────────────────
+    # ── 5. Traitements habituels ──────────────────────────────────────────────
     if trts_hab:
         entries = [sec("Traitements habituels")]; shade = False
         for t in trts_hab:
@@ -362,31 +358,45 @@ def generate_pdf(enriched_dpi: dict, cr: dict, filename_stem: str) -> bytes | No
             entries.append(row(nom_t, pos, shade)); shade = not shade
         story += [make_table(entries), Spacer(1, 3*mm)]
 
-    # ── 7. Interrogatoire ─────────────────────────────────────────────────────
-    symp_gen = interrogatoire_d.get("symptomes_generaux") or ""
+    # ── 6. Interrogatoire ─────────────────────────────────────────────────────
+    symp_gen = interrogatoire_d.get("symptomes_generaux") or {}
     symp_org = interrogatoire_d.get("symptomes_par_organe") or []
-    examens  = interrogatoire_d.get("examens_realises") or ""
-    if symp_gen or symp_org or examens:
+    autres   = interrogatoire_d.get("autres") or []
+
+    # Only show symptomes_generaux fields that are not null
+    gen_items = {}
+    if isinstance(symp_gen, dict):
+        labels_gen = {"asthenie": "Asthénie", "perte_de_poids": "Perte de poids",
+                      "fievre": "Fièvre", "anorexie": "Anorexie"}
+        gen_items = {labels_gen[k]: v for k, v in symp_gen.items()
+                     if k in labels_gen and v}
+
+    if gen_items or symp_org or autres:
         entries = [sec("Interrogatoire")]
-        if symp_gen:
-            entries.append(row("Symptômes généraux", symp_gen))
+        if gen_items:
+            entries.append(row("Symptômes généraux", ", ".join(f"{k}: {v}" for k, v in gen_items.items())))
         for s in symp_org:
             detail = s.get("symptomes", "")
             if s.get("date_debut"):  detail += f" — depuis {s['date_debut']}"
+            if s.get("intensite"):   detail += f" — intensité : {s['intensite']}"
             if s.get("evolution"):   detail += f" — {s['evolution']}"
+            if s.get("traitements_testes"): detail += f" — traitements testés : {s['traitements_testes']}"
+            if s.get("examens_complementaires_realises"):
+                detail += f" — examens : {s['examens_complementaires_realises']}"
             entries.append(row(s.get("organe", ""), detail))
-        if examens:
-            entries.append(row("Examens réalisés", examens))
+        if autres:
+            entries.append(row("Autres", " · ".join(autres)))
         story += [make_table(entries), Spacer(1, 3*mm)]
 
-    # ── 8. Examen clinique ────────────────────────────────────────────────────
+    # ── 7. Examen clinique ────────────────────────────────────────────────────
     constantes = examen_d.get("constantes") or {}
     exam_spec  = examen_d.get("examen_specifique") or ""
     const_vals = {k: v for k, v in constantes.items() if v is not None}
     const_labels = {"poids_kg": "Poids (kg)", "taille_cm": "Taille (cm)", "imc": "IMC",
                     "pression_arterielle": "Pression artérielle",
-                    "frequence_cardiaque": "Fréquence cardiaque",
-                    "temperature": "Température (°C)", "spo2": "SpO2 (%)"}
+                    "frequence_cardiaque": "Fréquence cardiaque (bpm)",
+                    "temperature": "Température (°C)", "spo2": "SpO2 (%)",
+                    "frequence_respiratoire": "Fréquence respiratoire"}
     if const_vals or exam_spec:
         entries = [sec("Examen clinique")]; shade = False
         for k, v in const_vals.items():
@@ -395,24 +405,36 @@ def generate_pdf(enriched_dpi: dict, cr: dict, filename_stem: str) -> bytes | No
             entries.append(row("Examen spécifique", exam_spec, shade))
         story += [make_table(entries), Spacer(1, 3*mm)]
 
-    # ── 9. Conclusion ─────────────────────────────────────────────────────────
-    diag   = conclusion.get("diagnostic") or ""
-    prop   = conclusion.get("proposition_therapeutique") or ""
-    excomp = conclusion.get("examens_complementaires") or []
-    orient = conclusion.get("orientation") or ""
-    proch  = conclusion.get("prochaine_consultation") or ""
-    if any([diag, prop, excomp, orient, proch, cr_textuel]):
+    # ── 8. Conclusion ─────────────────────────────────────────────────────────
+    points_cles  = conclusion.get("points_cles") or []
+    diagnostics  = conclusion.get("diagnostic") or []
+    prop_ther    = conclusion.get("proposition_therapeutique") or {}
+    proch        = conclusion.get("prochaine_consultation") or ""
+
+    medics  = prop_ther.get("medicaments") or [] if isinstance(prop_ther, dict) else []
+    paramed = prop_ther.get("paramedical") or [] if isinstance(prop_ther, dict) else []
+    excomp  = prop_ther.get("examens_complementaires") or [] if isinstance(prop_ther, dict) else []
+    orient  = prop_ther.get("orientation") or "" if isinstance(prop_ther, dict) else ""
+
+    if any([points_cles, diagnostics, medics, paramed, excomp, orient, proch]):
         entries = [sec("Conclusion")]
-        if diag:   entries.append(row("Diagnostic", diag))
-        if prop:   entries.append(row("Proposition thérapeutique", prop))
-        if excomp: entries.append(row("Examens complémentaires", ", ".join(excomp)))
-        if orient: entries.append(row("Orientation", orient))
-        if proch:  entries.append(row("Prochaine consultation", proch))
-        if cr_textuel and not any([diag, prop]):
-            entries.append(row("Compte-rendu", cr_textuel))
+        if points_cles:
+            entries.append(row("Points clés", " · ".join(points_cles)))
+        if diagnostics:
+            entries.append(row("Diagnostic", " · ".join(diagnostics) if isinstance(diagnostics, list) else str(diagnostics)))
+        if medics:
+            entries.append(row("Médicaments", " · ".join(medics)))
+        if paramed:
+            entries.append(row("Paramédical", " · ".join(paramed)))
+        if excomp:
+            entries.append(row("Examens complémentaires", " · ".join(excomp)))
+        if orient:
+            entries.append(row("Orientation", orient))
+        if proch:
+            entries.append(row("Prochaine consultation", proch))
         story += [make_table(entries), Spacer(1, 3*mm)]
 
-    # ── 10. Ordonnance ────────────────────────────────────────────────────────
+    # ── 9. Ordonnance ─────────────────────────────────────────────────────────
     if prescs:
         entries = [sec("Ordonnance")]
         for i, line in enumerate(prescs):

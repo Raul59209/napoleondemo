@@ -17,7 +17,6 @@ def build_dpi_prompt(transcript: str, existing_dpi: dict | None = None) -> str:
 
     dpi_schema = {
         "motif_de_consultation": "string ou null",
-        "historique_medical": "string — contexte médical évoqué ou null",
         "antecedents": {
             "medicaux": ["liste de strings ou tableau vide"],
             "chirurgicaux": ["liste de strings ou tableau vide"],
@@ -42,17 +41,25 @@ def build_dpi_prompt(transcript: str, existing_dpi: dict | None = None) -> str:
         ],
         "allergies": ["liste de strings ou tableau vide"],
         "interrogatoire": {
-            "symptomes_generaux": "string ou null",
+            "symptomes_generaux": {
+                "description": "Uniquement : asthénie, perte de poids, fièvre, anorexie. Null si aucun de ces symptômes n'est mentionné.",
+                "asthenie": "string ou null",
+                "perte_de_poids": "string ou null",
+                "fievre": "string ou null",
+                "anorexie": "string ou null"
+            },
             "symptomes_par_organe": [
                 {
-                    "organe": "string",
-                    "symptomes": "string",
+                    "organe": "string — nom de l'organe ou système concerné",
+                    "symptomes": "string — description des symptômes",
                     "date_debut": "string ou null",
+                    "intensite": "string ou null",
                     "evolution": "string ou null",
-                    "traitements_testes": "string ou null"
+                    "traitements_testes": "string ou null",
+                    "examens_complementaires_realises": "string ou null"
                 }
             ],
-            "examens_realises": "string ou null"
+            "autres": ["liste de strings — éléments évoqués brièvement non rattachés à un organe, ou tableau vide"]
         },
         "examen_clinique": {
             "constantes": {
@@ -62,15 +69,20 @@ def build_dpi_prompt(transcript: str, existing_dpi: dict | None = None) -> str:
                 "pression_arterielle": "string ou null",
                 "frequence_cardiaque": "number ou null",
                 "temperature": "number ou null",
-                "spo2": "number ou null"
+                "spo2": "number ou null",
+                "frequence_respiratoire": "number ou null"
             },
             "examen_specifique": "string ou null"
         },
         "conclusion": {
-            "diagnostic": "string ou null",
-            "proposition_therapeutique": "string ou null",
-            "examens_complementaires": ["liste de strings ou tableau vide"],
-            "orientation": "string ou null",
+            "points_cles": ["liste de strings — éléments importants issus de l'interrogatoire et de l'examen clinique"],
+            "diagnostic": ["liste de strings — diagnostic(s) probable(s) nouveau(x) issus de cette consultation"],
+            "proposition_therapeutique": {
+                "medicaments": ["liste de strings ou tableau vide"],
+                "paramedical": ["liste de strings ou tableau vide"],
+                "examens_complementaires": ["liste de strings ou tableau vide"],
+                "orientation": "string ou null"
+            },
             "prochaine_consultation": "string ou null"
         }
     }
@@ -98,8 +110,17 @@ TRANSCRIPTION DE LA CONSULTATION :
 
 INSTRUCTIONS :
 - Extrais toutes les informations médicales présentes dans la transcription.
-- Ne invente rien : les champs non mentionnés dans la transcription doivent être null ou [].
-- Pour les constantes (poids, tension, etc.), n'inscris que ce qui est explicitement dit.
+- symptomes_generaux : uniquement asthénie, perte de poids, fièvre, anorexie.
+  Ne pas y mettre d'autres symptômes même s'ils sont mentionnés.
+- symptomes_par_organe : un item par organe/système. Les examens complémentaires
+  réalisés sont rattachés à l'organe concerné dans examens_complementaires_realises.
+- autres : éléments évoqués brièvement non rattachables à un organe spécifique.
+- conclusion.points_cles : synthèse des éléments importants de l'interrogatoire et
+  de l'examen clinique.
+- conclusion.diagnostic : uniquement les nouveaux diagnostics émergents de cette consultation.
+- conclusion.proposition_therapeutique : réponse directe à chaque point clé, séparée
+  en médicaments, paramédical, examens complémentaires, orientation.
+- Les champs non mentionnés dans la transcription doivent être null ou [], jamais inventés.
 - Réponds UNIQUEMENT avec le JSON valide, sans texte avant ni après, sans markdown.
 
 SCHÉMA À RESPECTER :
@@ -164,9 +185,16 @@ def build_cr_prompt(transcript: str, enriched_dpi: dict) -> str:
 
     cr_schema = {
         "dpi_textuel": (
-            "string — résumé textuel structuré du DPI complet du patient "
-            "(antécédents, traitements habituels, allergies, mode de vie). "
-            "Null si le DPI ne contient pas d'informations pertinentes."
+            "string — aperçu synthétique du dossier patient en format structuré, "
+            "sans phrases, uniquement les éléments importants. "
+            "Format attendu (n'inclure que les sections non vides) :\n"
+            "Antécédents\n- [antécédent 1]\n- [antécédent 2]\n\n"
+            "Traitements habituels\n- [médicament posologie]\n\n"
+            "Allergies : [liste ou 0 si aucune]\n\n"
+            "Tabac : [quantité ou non-fumeur si mentionné]\n"
+            "Alcool : [quantité si mentionné]\n"
+            "Activité physique : [description si mentionnée]\n\n"
+            "Null si le DPI ne contient aucune information pertinente."
         ),
         "cr_textuel": (
             "string — compte-rendu textuel complet de cette consultation : "
@@ -189,12 +217,15 @@ DPI ENRICHI DU PATIENT (pour contexte) :
 {json.dumps(enriched_dpi, ensure_ascii=False, indent=2)}
 
 INSTRUCTIONS :
-- dpi_textuel : résumé structuré du DPI du patient en français médical clair.
-  Inclure antécédents, pathologies chroniques, traitements habituels, allergies,
-  mode de vie. Null si le DPI est vide.
+- dpi_textuel : aperçu rapide du dossier, sans phrases. Sections à inclure si non vides :
+    "Antécédents" avec une puce par antécédent médical/chirurgical/familial,
+    "Traitements habituels" avec une puce par médicament et sa posologie,
+    "Allergies : X" (ou "Allergies : 0" si aucune allergie connue),
+    "Tabac / Alcool / Activité physique" si mentionnés.
+  Ne pas faire de phrases. Ne pas inclure le motif de consultation ni l'interrogatoire.
 - cr_textuel : compte-rendu complet de cette consultation en français médical.
-  Inclure motif, interrogatoire, examen clinique, diagnostic, proposition
-  thérapeutique. Rédige comme un médecin dans un dossier patient.
+  Inclure motif, interrogatoire, examen clinique, diagnostic, proposition thérapeutique.
+  Rédige comme un médecin dans un dossier patient.
 - prescription_lines : une entrée par médicament prescrit lors de cette consultation.
   Format : "NomCommercial (DCI) — posologie — fréquence — durée".
   Liste vide [] si aucune prescription.
