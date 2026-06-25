@@ -2,9 +2,9 @@
 app_demo.py — Napoleon Medical Pipeline
 ========================================
 Flow:
-  Upload audio (+ optional DPI JSON)  →  click "Lancer"
+  Mic recording OR file upload  →  click "Lancer"
   The pipeline runs fully automatically:
-    1. Transcription  (Scaleway Whisper)
+    1. Transcription  (Kyutai STT 1B en/fr, via transformers — one-shot, NOT live streaming)
     2. Correction
     3. Hallucination check  (local)
     4. Medical review  (LLM)
@@ -14,6 +14,21 @@ Flow:
     8. PDF generation  (reportlab)
 
   Tabs are read-only result viewers — no more button-per-step.
+
+NOTE ON STREAMING: Kyutai STT is architecturally a streaming model, but this
+app does NOT show live word-by-word captions while recording. st.audio_input
+only returns a complete recording after the user clicks stop — same as a
+file upload, just from a mic instead of a file. The transcript is then sent
+to Kyutai in ONE shot, same call pattern as a batch model. True live
+streaming would require a custom JS component + WebSocket connection to
+Kyutai's Rust server, which is a separate, much larger build (see chat).
+
+NOTE ON LONG/REPEAT AUDIO: benchmark testing found Kyutai 1B can fall into
+repetition loops ("oui oui oui...") on some longer recordings (2 of 6 test
+files in one run had WER ~0.77 due to this). detect_hallucination() below
+catches this same way it already did for the previous STT engine — it's not
+new protection added for this swap, but it's the safety net this issue
+actually needs given Kyutai's known failure mode.
 """
 
 import io
@@ -26,14 +41,31 @@ from pathlib import Path
 
 import streamlit as st
 from dotenv import load_dotenv
-from kyutai_streaming_client import KyutaiStreamingClient
 
 load_dotenv()
 
-kyutai = KyutaiStreamingClient(
-    model="sherpa-small",
-    language="fr"
-)
+import torch
+import torchaudio
+from transformers import KyutaiSpeechToTextProcessor, KyutaiSpeechToTextForConditionalGeneration
+
+KYUTAI_MODEL_ID = "kyutai/stt-1b-en_fr-trfs"   # bilingual en/fr
+KYUTAI_TARGET_SR = 24000                        # Kyutai STT expects 24kHz audio
+
+@st.cache_resource
+def load_kyutai():
+    """
+    Loaded once per Streamlit server process (not per-run) via st.cache_resource —
+    this model takes real time to load, and re-loading it on every pipeline run
+    would make every consultation noticeably slower for no reason.
+    """
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    processor = KyutaiSpeechToTextProcessor.from_pretrained(KYUTAI_MODEL_ID)
+    model = KyutaiSpeechToTextForConditionalGeneration.from_pretrained(
+        KYUTAI_MODEL_ID, device_map=device, torch_dtype="auto"
+    )
+    return processor, model, device
+
+kyutai_processor, kyutai_model, kyutai_device = load_kyutai()
 
 
 # ── Page config ───────────────────────────────────────────────────────────────
@@ -168,14 +200,48 @@ def detect_hallucination(text: str) -> tuple[bool, str]:
 
 def transcribe_audio(audio_bytes: bytes, filename: str) -> tuple[str, int]:
     """
-    Kyutai streaming STT → returns raw transcript + word count
+    Kyutai STT 1B (en/fr) via transformers — ONE-SHOT batch call.
+    Works identically whether audio_bytes came from a mic recording
+    (st.audio_input) or an uploaded file — both arrive as bytes here.
+
+    Loads the bytes through torchaudio (works for wav/m4a/mp3/flac/ogg via
+    its ffmpeg backend), downmixes to mono, resamples to 24kHz (Kyutai's
+    expected input rate), then runs it through the processor/model.
+
+    IMPORTANT: audio must be passed as the explicit `audio=` keyword to
+    the processor. KyutaiSpeechToTextProcessor.__call__ has signature
+    (images=None, text=None, videos=None, audio=None, ...) — passing the
+    array positionally lands it in the `images` slot instead, producing an
+    EMPTY BatchFeature and a downstream crash in model.generate() reading
+    .shape on None. This bug cost real debugging time earlier — do not
+    revert to positional.
     """
+    suffix = Path(filename).suffix or ".wav"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(audio_bytes)
+        tmp_path = tmp.name
+
     try:
-        transcript = kyutai.transcribe_bytes(audio_bytes)
-        transcript = transcript.strip()
-        return transcript, len(transcript.split())
+        waveform, sr = torchaudio.load(tmp_path)
+        if waveform.shape[0] > 1:  # downmix stereo to mono
+            waveform = waveform.mean(dim=0, keepdim=True)
+        if sr != KYUTAI_TARGET_SR:
+            waveform = torchaudio.functional.resample(waveform, sr, KYUTAI_TARGET_SR)
+        audio_array = waveform.squeeze(0).numpy()
+
+        inputs = kyutai_processor(audio=audio_array, return_tensors="pt")
+        inputs = inputs.to(kyutai_device)
+
+        with torch.no_grad():
+            output_tokens = kyutai_model.generate(**inputs)
+
+        text = kyutai_processor.batch_decode(output_tokens, skip_special_tokens=True)[0]
+        text = text.strip()
+        return text, len(text.split())
     except Exception as e:
         raise RuntimeError(f"Kyutai STT failed: {e}")
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
 
 
 
@@ -602,8 +668,8 @@ def run_pipeline(audio_bytes: bytes, audio_filename: str):
         return
     st.session_state.cr = cr_result
 
-    # Step 8 — PDF
-    update(8)
+    # Step 7 — PDF
+    update(7)
     stem = Path(audio_filename).stem
     st.session_state.pdf_bytes     = generate_pdf(dpi_result, cr_result, stem)
     st.session_state.llm_time = total_llm_time
@@ -638,14 +704,30 @@ with tab_launch:
 
         st.markdown('<div class="step-card">', unsafe_allow_html=True)
         st.markdown("#### 1. Charger l'audio")
-        st.caption("Formats : .m4a, .wav, .mp3, .flac, .ogg")
-        uploaded = st.file_uploader("Audio", type=["m4a","wav","mp3","flac","ogg"], label_visibility="collapsed")
+        input_mode = st.radio(
+            "Source audio",
+            ["🎙️ Enregistrer au micro", "📁 Charger un fichier"],
+            label_visibility="collapsed",
+            horizontal=True,
+        )
+
+        uploaded = None
+        if input_mode.startswith("🎙️"):
+            st.caption("Cliquez pour démarrer l'enregistrement, puis à nouveau pour l'arrêter.")
+            mic_audio = st.audio_input("Enregistrement micro", label_visibility="collapsed")
+            if mic_audio:
+                uploaded = mic_audio
+                uploaded.name = "enregistrement_micro.wav"  # st.audio_input doesn't set .name by default
+        else:
+            st.caption("Formats : .m4a, .wav, .mp3, .flac, .ogg")
+            uploaded = st.file_uploader("Audio", type=["m4a","wav","mp3","flac","ogg"], label_visibility="collapsed")
+
         if uploaded:
             st.audio(uploaded)
         st.markdown("</div>", unsafe_allow_html=True)
 
         if uploaded:
-            st.caption(f"Whisper large-v3 · llama-3.3-70b · Scaleway")
+            st.caption("Kyutai STT 1B (en/fr) · llama-3.3-70b · Scaleway")
             launch = st.button("Lancer le pipeline complet", use_container_width=True)
 
             if launch:
