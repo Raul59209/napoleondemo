@@ -2,7 +2,9 @@
 launcher.py — Napoleon Launcher
 ================================
 Starts the Streamlit app and opens it in the browser.
-No GPU or CUDA setup needed — all inference runs on Scaleway.
+
+STT now runs locally using Kyutai models (Hugging Face).
+LLM (DPI, CR, review) still runs on Scaleway.
 
 Usage:
     python launcher.py
@@ -35,10 +37,13 @@ def main():
         "--browser.gatherUsageStats=false",
     ]
 
+    # Launch Streamlit
     subprocess.Popen(cmd, env=os.environ.copy())
 
+    # Give Streamlit time to start
     time.sleep(4)
 
+    # Open browser
     webbrowser.open("http://localhost:8501")
 
 

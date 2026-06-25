@@ -5,11 +5,13 @@ Flow:
   Upload audio (+ optional DPI JSON)  →  click "Lancer"
   The pipeline runs fully automatically:
     1. Transcription  (Scaleway Whisper)
-    2. Hallucination check  (local)
-    3. Medical review  (LLM)
-    4. DPI enrichment  (LLM call 1)
-    5. CR generation   (LLM call 2)
-    6. PDF generation  (reportlab)
+    2. Correction
+    3. Hallucination check  (local)
+    4. Medical review  (LLM)
+    5. Diarizatiion
+    6. DPI enrichment  (LLM call 1)
+    7. CR generation   (LLM call 2)
+    8. PDF generation  (reportlab)
 
   Tabs are read-only result viewers — no more button-per-step.
 """
@@ -24,8 +26,15 @@ from pathlib import Path
 
 import streamlit as st
 from dotenv import load_dotenv
+from kyutai_streaming_client import KyutaiStreamingClient
 
 load_dotenv()
+
+kyutai = KyutaiStreamingClient(
+    model="sherpa-small",
+    language="fr"
+)
+
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -158,19 +167,16 @@ def detect_hallucination(text: str) -> tuple[bool, str]:
 
 
 def transcribe_audio(audio_bytes: bytes, filename: str) -> tuple[str, int]:
-    suffix = Path(filename).suffix or ".mp3"
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        tmp.write(audio_bytes)
-        tmp_path = tmp.name
+    """
+    Kyutai streaming STT → returns raw transcript + word count
+    """
     try:
-        with open(tmp_path, "rb") as f:
-            result = scw_client.audio.transcriptions.create(
-                model="whisper-large-v3", file=f, language="fr",
-            )
-        text = result.text.strip()
-        return text, len(text.split())
-    finally:
-        os.unlink(tmp_path)
+        transcript = kyutai.transcribe_bytes(audio_bytes)
+        transcript = transcript.strip()
+        return transcript, len(transcript.split())
+    except Exception as e:
+        raise RuntimeError(f"Kyutai STT failed: {e}")
+
 
 
 def call_llm(prompt: str, max_tokens: int = 4000) -> dict:
@@ -463,6 +469,7 @@ def run_pipeline(audio_bytes: bytes, audio_filename: str):
 
     STEPS = [
         "Transcription audio",
+        "Correction transcription",
         "Vérification anti-hallucination",
         "Relecture médicale",
         "Diarisation (identification des locuteurs)",
@@ -510,16 +517,31 @@ def run_pipeline(audio_bytes: bytes, audio_filename: str):
     st.session_state.word_count     = wc
     st.session_state.audio_filename = audio_filename
 
-    # Step 2 — Hallucination check
+    # Step 2 — LLM error correction
     update(2)
-    is_hal, reason = detect_hallucination(text)
-    st.session_state.hallucination_ok     = not is_hal
-    st.session_state.hallucination_reason = reason
-    if is_hal:
-        st.warning(f"⚠️ Hallucination détectée : {reason}. Pipeline continué — vérifiez la transcription.")
+    llm_start = time.perf_counter()
 
-    # Step 3 — Medical review
+    from prompts import build_error_correction_prompt
+
+    correction = call_llm(build_error_correction_prompt(text), max_tokens=2000)
+
+    total_llm_time += (time.perf_counter() - llm_start)
+
+    if "error" in correction:
+        st.warning("⚠️ Correction impossible — utilisation de la transcription brute.")
+        corrected_text = text
+    else:
+        corrected_text = correction.get("transcript_corrigee", text)
+
+    st.session_state.raw_transcript = text
+    st.session_state.corrected_transcript = corrected_text
+    text = corrected_text
+
+    # Step 3 — anti-hallucination
     update(3)
+    is_hal, reason = detect_hallucination(text)
+    st.session_state.hallucination_ok = not is_hal
+    st.session_state.hallucination_reason = reason
     llm_start = time.perf_counter()
 
     review_result = call_llm(build_review_prompt(text), max_tokens=2000)
@@ -580,8 +602,8 @@ def run_pipeline(audio_bytes: bytes, audio_filename: str):
         return
     st.session_state.cr = cr_result
 
-    # Step 7 — PDF
-    update(7)
+    # Step 8 — PDF
+    update(8)
     stem = Path(audio_filename).stem
     st.session_state.pdf_bytes     = generate_pdf(dpi_result, cr_result, stem)
     st.session_state.llm_time = total_llm_time

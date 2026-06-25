@@ -2,7 +2,11 @@
 install.py — Napoleon Installer
 ================================
 Sets up a virtual environment and installs all dependencies.
-No GPU, CUDA, or local model required — transcription runs on Scaleway.
+
+Transcription now runs LOCALLY using Kyutai STT models (Hugging Face).
+No API key required for STT.
+
+The Scaleway API key is still required for LLM calls (DPI, CR, review).
 
 Usage:
     Double-click install.py, or run: python install.py
@@ -16,11 +20,15 @@ from pathlib import Path
 BASE_DIR = Path(__file__).parent
 VENV_DIR = BASE_DIR / "venv"
 
+# Updated dependency list for Kyutai + Streamlit + LLM
 REQUIREMENTS = [
     "streamlit",
     "openai",
     "python-dotenv",
     "reportlab",
+    "kyutai-streaming-client",
+    "numpy",
+    "soundfile",
 ]
 
 
@@ -52,11 +60,15 @@ def check_python_version():
 
 
 def check_env_file():
-    """Warn if .env is missing or has no API key, but don't block install."""
+    """
+    Warn if .env is missing or has no Scaleway API key.
+    STT does NOT require any API key.
+    """
     env_path = BASE_DIR / ".env"
     if not env_path.exists():
         print("\n⚠️  No .env file found.")
-        print("    Napoleon will ask for your Scaleway API key on first launch.")
+        print("    Kyutai STT works without any API key.")
+        print("    For LLM (DPI/CR), Napoleon will ask for your Scaleway API key on first launch.")
         print("    Or create a .env file now with:")
         print("        SCW_API_KEY=scw-your-key-here")
         return
@@ -64,7 +76,8 @@ def check_env_file():
     content = env_path.read_text()
     if "SCW_API_KEY" not in content:
         print("\n⚠️  .env exists but SCW_API_KEY is not set.")
-        print("    Napoleon will ask for your key on first launch.")
+        print("    Kyutai STT works without any API key.")
+        print("    Napoleon will ask for your Scaleway key on first launch.")
     else:
         print("✓  .env file found with SCW_API_KEY.")
 
@@ -114,8 +127,8 @@ def create_run_bat():
 
 def main():
     banner("NAPOLEON INSTALLER")
-    print("  Transcription & extraction pipeline for medical audio.")
-    print("  Powered by Scaleway Generative APIs — no local GPU needed.")
+    print("  Medical audio pipeline — local Kyutai STT + Scaleway LLM.")
+    print("  No GPU required. Kyutai models run locally via Hugging Face.")
 
     print("\n── System checks ──")
     check_python_version()
