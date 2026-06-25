@@ -128,6 +128,51 @@ SCHÉMA À RESPECTER :
 """
 
 
+def build_error_correction_prompt(kyutai_transcript: str) -> str:
+    """
+    Error correction call: fixes Kyutai streaming STT errors.
+    Runs immediately after Kyutai transcription to catch medical term misses,
+    medication names, and dosage errors before medical review.
+    Returns a corrected transcript and confidence metrics.
+    """
+
+    correction_schema = {
+        "transcript_corrigee": "string — la transcription complète avec les corrections appliquées",
+        "corrections_appliquees": [
+            {
+                "original": "string — le mot ou groupe de mots tel que transcrit par Kyutai",
+                "corrige": "string — la correction proposée",
+                "type": "string — medicament | dosage | anatomie | numero | autre",
+                "confiance": "string — haute | moyenne | faible",
+                "raison": "string — pourquoi cette correction a été appliquée"
+            }
+        ],
+        "qualite_transcription": "string — excellente | bonne | acceptable | mauvaise"
+    }
+
+    return f"""Tu es un assistant médical expert en correction de transcriptions STT (speech-to-text).
+
+TRANSCRIPTION BRUTE DE KYUTAI :
+{kyutai_transcript}
+
+INSTRUCTIONS :
+- Corrige les erreurs courantes de STT streaming, notamment :
+  • Noms de médicaments mal reconnus (ex: "Doliprane" → "Doliprane", "Advil" → "Ibuprofène")
+  • Dosages mal transcrits (ex: "250 milligrammes" → "250 mg")
+  • Termes anatomiques déformés (ex: "cardia" → "cardiaque")
+  • Chiffres mal reconnus (ex: "mille deux cents" → "1200")
+  • Hésitations et faux démarrages (ex: "euh le patient a euh... le patient a mal au genou" → "le patient a mal au genou")
+- Conserve l'intention et la structure originale.
+- N'invente PAS d'informations médicales qui n'étaient pas présentes.
+- Si la transcription semble déjà correcte, retourne corrections_appliquees=[].
+- Évalue la qualité globale de la transcription (excellente/bonne/acceptable/mauvaise).
+- Réponds UNIQUEMENT avec le JSON valide, sans texte avant ni après, sans markdown.
+
+SCHÉMA À RETOURNER :
+{json.dumps(correction_schema, ensure_ascii=False, indent=2)}
+"""
+
+
 def build_review_prompt(transcript: str) -> str:
     """
     Medical review call: checks the transcript for transcription errors,
