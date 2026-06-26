@@ -57,12 +57,21 @@ def load_kyutai():
     Loaded once per Streamlit server process (not per-run) via st.cache_resource —
     this model takes real time to load, and re-loading it on every pipeline run
     would make every consultation noticeably slower for no reason.
+
+    NOTE: deliberately NOT using device_map=device here. device_map is meant
+    for splitting a model across MULTIPLE devices/GPUs; for a single device
+    it's simpler and more robust to load normally then .to(device). Passing
+    a plain device string to device_map raised a ValueError inside
+    accelerate's check_and_set_device_map on the transformers/accelerate
+    versions Streamlit Cloud installed — switching to .to(device) avoids
+    that code path entirely.
     """
     device = "cuda" if torch.cuda.is_available() else "cpu"
     processor = KyutaiSpeechToTextProcessor.from_pretrained(KYUTAI_MODEL_ID)
     model = KyutaiSpeechToTextForConditionalGeneration.from_pretrained(
-        KYUTAI_MODEL_ID, device_map=device, torch_dtype="auto"
+        KYUTAI_MODEL_ID, torch_dtype="auto"
     )
+    model = model.to(device)
     return processor, model, device
 
 kyutai_processor, kyutai_model, kyutai_device = load_kyutai()
