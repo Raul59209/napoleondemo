@@ -2,4 +2,6 @@ streamlit
 openai
 python-dotenv
 reportlab
-kyutai-streaming-client
+transformers>=4.53.0
+torch
+torchaudio
