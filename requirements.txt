@@ -4,4 +4,5 @@ python-dotenv
 reportlab
 transformers>=4.53.0
 torch
-torchaudio
+soundfile
+scipy
