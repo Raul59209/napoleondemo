@@ -45,7 +45,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import torch
-import torchaudio
+import soundfile as sf
+import numpy as np
+from scipy import signal as scipy_signal
 from transformers import KyutaiSpeechToTextProcessor, KyutaiSpeechToTextForConditionalGeneration
 
 KYUTAI_MODEL_ID = "kyutai/stt-1b-en_fr-trfs"   # bilingual en/fr
@@ -213,9 +215,12 @@ def transcribe_audio(audio_bytes: bytes, filename: str) -> tuple[str, int]:
     Works identically whether audio_bytes came from a mic recording
     (st.audio_input) or an uploaded file — both arrive as bytes here.
 
-    Loads the bytes through torchaudio (works for wav/m4a/mp3/flac/ogg via
-    its ffmpeg backend), downmixes to mono, resamples to 24kHz (Kyutai's
-    expected input rate), then runs it through the processor/model.
+    Loads the bytes via soundfile (works for wav/flac/ogg natively; for m4a/mp3
+    it relies on soundfile's libsndfile backend, which covers most common
+    cases without pulling in TorchCodec — torchaudio.load() now requires
+    TorchCodec as of recent torchaudio versions, which isn't installed and
+    caused a hard failure: "TorchCodec is required for load_with_torchcodec".
+    Using soundfile + scipy.signal.resample sidesteps that dependency entirely.
 
     IMPORTANT: audio must be passed as the explicit `audio=` keyword to
     the processor. KyutaiSpeechToTextProcessor.__call__ has signature
@@ -231,12 +236,12 @@ def transcribe_audio(audio_bytes: bytes, filename: str) -> tuple[str, int]:
         tmp_path = tmp.name
 
     try:
-        waveform, sr = torchaudio.load(tmp_path)
-        if waveform.shape[0] > 1:  # downmix stereo to mono
-            waveform = waveform.mean(dim=0, keepdim=True)
+        audio_array, sr = sf.read(tmp_path, dtype="float32", always_2d=False)
+        if audio_array.ndim > 1:  # downmix multi-channel to mono
+            audio_array = audio_array.mean(axis=1)
         if sr != KYUTAI_TARGET_SR:
-            waveform = torchaudio.functional.resample(waveform, sr, KYUTAI_TARGET_SR)
-        audio_array = waveform.squeeze(0).numpy()
+            n_samples = int(len(audio_array) * KYUTAI_TARGET_SR / sr)
+            audio_array = scipy_signal.resample(audio_array, n_samples).astype("float32")
 
         inputs = kyutai_processor(audio=audio_array, return_tensors="pt")
         inputs = inputs.to(kyutai_device)
@@ -728,8 +733,8 @@ with tab_launch:
                 uploaded = mic_audio
                 uploaded.name = "enregistrement_micro.wav"  # st.audio_input doesn't set .name by default
         else:
-            st.caption("Formats : .m4a, .wav, .mp3, .flac, .ogg")
-            uploaded = st.file_uploader("Audio", type=["m4a","wav","mp3","flac","ogg"], label_visibility="collapsed")
+            st.caption("Formats : .wav, .flac, .ogg (libsndfile — .m4a/.mp3 non garantis avec ce backend)")
+            uploaded = st.file_uploader("Audio", type=["wav","flac","ogg"], label_visibility="collapsed")
 
         if uploaded:
             st.audio(uploaded)
